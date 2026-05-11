@@ -283,20 +283,42 @@
   </main>
 
   <script>
-    const state = { status: null };
+    const state = { status: null, apiBase: null };
     const $ = (id) => document.getElementById(id);
-    const ingressBase = () => {
-      const path = window.location.pathname.replace(/\/$/, "");
-      return path.startsWith("/app/") ? path : "";
+
+    function apiCandidates(path) {
+      const cleanPath = path.startsWith("/") ? path : `/${path}`;
+      const appPath = window.location.pathname.replace(/\/$/, "");
+      const candidates = [];
+      if (state.apiBase !== null) candidates.push(`${state.apiBase}${cleanPath}`);
+      candidates.push(cleanPath);
+      if (appPath.startsWith("/app/")) {
+        candidates.push(`${appPath}${cleanPath}`);
+        candidates.push(`${appPath}/${cleanPath.slice(1)}`);
+      }
+      candidates.push(new URL(`.${cleanPath}`, `${window.location.href.replace(/\/$/, "")}/`).pathname);
+      return [...new Set(candidates)];
     };
 
     async function api(path, options = {}) {
-      const response = await fetch(`${ingressBase()}${path}`, {
-        headers: { "content-type": "application/json" },
-        ...options,
-      });
-      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-      return response.json();
+      let lastError = null;
+      for (const candidate of apiCandidates(path)) {
+        try {
+          const response = await fetch(candidate, {
+            headers: { "content-type": "application/json" },
+            ...options,
+          });
+          if (!response.ok) {
+            lastError = new Error(`${response.status} ${response.statusText}`);
+            continue;
+          }
+          state.apiBase = candidate.slice(0, -path.length);
+          return response.json();
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      throw lastError || new Error("API unavailable");
     }
 
     function tile(label, value) {

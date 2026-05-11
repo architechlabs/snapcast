@@ -54,8 +54,18 @@ class SnapcastManager:
             ]),
             encoding="utf-8",
         )
-        self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH)])
+        quiet = [
+            "(Avahi) Failed to create client",
+            "(AsioStream) No data since",
+            "(Server) onResync",
+        ]
+        self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH), "--server.mdns=false"], quiet_substrings=quiet)
         await self.process.start()
+        await asyncio.sleep(0.4)
+        if not self.process.running():
+            LOG.warning("snapserver rejected --server.mdns=false; retrying with config-only mDNS disable")
+            self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH)], quiet_substrings=quiet)
+            await self.process.start()
 
     async def stop(self) -> None:
         if self.process:

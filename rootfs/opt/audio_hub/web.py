@@ -34,9 +34,14 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
 
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)
+    app.router.add_get("/{prefix:.+}/api/status", status)
     app.router.add_patch("/api/config", patch_config)
+    app.router.add_patch("/{prefix:.+}/api/config", patch_config)
     app.router.add_post("/api/restart", restart)
+    app.router.add_post("/{prefix:.+}/api/restart", restart)
     app.router.add_post("/api/reload-devices", reload_devices)
+    app.router.add_post("/{prefix:.+}/api/reload-devices", reload_devices)
     app.router.add_post("/api/entities/remove", remove_entities)
+    app.router.add_post("/{prefix:.+}/api/entities/remove", remove_entities)
     app.router.add_static("/static", static_root)
     return app

@@ -9,10 +9,11 @@ LOG = logging.getLogger("process")
 
 
 class ManagedProcess:
-    def __init__(self, name: str, command: Sequence[str], env: dict[str, str] | None = None):
+    def __init__(self, name: str, command: Sequence[str], env: dict[str, str] | None = None, quiet_substrings: Sequence[str] | None = None):
         self.name = name
         self.command = list(command)
         self.env = env or {}
+        self.quiet_substrings = list(quiet_substrings or [])
         self.proc: asyncio.subprocess.Process | None = None
         self.started = False
 
@@ -37,7 +38,10 @@ class ManagedProcess:
             line = await self.proc.stdout.readline()
             if not line:
                 break
-            LOG.info("[%s] %s", self.name, line.decode(errors="replace").rstrip())
+            text = line.decode(errors="replace").rstrip()
+            if any(marker in text for marker in self.quiet_substrings):
+                continue
+            LOG.info("[%s] %s", self.name, text)
 
     async def stop(self) -> None:
         if not self.proc:

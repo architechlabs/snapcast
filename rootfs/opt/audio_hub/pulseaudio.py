@@ -49,10 +49,17 @@ class PulseAudioManager:
                 "--exit-idle-time=-1",
                 "--disallow-exit=true",
                 "--log-target=stderr",
+                "--log-level=error",
                 "-L",
                 f"module-native-protocol-unix socket={PULSE_SOCKET} auth-anonymous=1 auth-cookie-enabled=0",
             ],
             env=PULSE_ENV,
+            quiet_substrings=[
+                "Running in system mode",
+                "Please make sure that you actually do want to do that",
+                "WhatIsWrongWithSystemWide",
+                "disallow-module-loading",
+            ],
         )
         self.processes["pulseaudio"] = pulse
         await pulse.start()
