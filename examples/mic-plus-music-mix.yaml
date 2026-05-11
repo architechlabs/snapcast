@@ -1,0 +1,18 @@
+audio:
+  routing_mode: mix
+  sample_rate: 48000
+  channels: 2
+  latency_ms: 120
+wired:
+  enabled: true
+  device: auto
+  profile: mic
+  volume: 0.9
+network:
+  enabled: true
+  tcp_pcm_enabled: true
+  tcp_pcm_port: 5555
+  volume: 0.85
+wireless:
+  bluetooth_enabled: false
+

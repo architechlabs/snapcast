@@ -1,0 +1,30 @@
+type: entities
+title: Snapcast Audio Hub
+show_header_toggle: false
+entities:
+  - entity: sensor.snapcast_audio_hub_pipeline
+    name: Pipeline
+  - entity: sensor.snapcast_audio_hub_active_source
+    name: Active source
+  - entity: sensor.snapcast_audio_hub_wired_input
+    name: Wired input
+  - entity: sensor.snapcast_audio_hub_snapcast
+    name: Snapcast
+  - entity: switch.snapcast_audio_hub_wired_enabled
+    name: Wired input
+  - entity: switch.snapcast_audio_hub_network_enabled
+    name: Network input
+  - entity: switch.snapcast_audio_hub_bluetooth_enabled
+    name: Bluetooth input
+  - entity: select.snapcast_audio_hub_routing_mode
+    name: Routing mode
+  - entity: number.snapcast_audio_hub_latency_ms
+    name: Latency
+  - entity: number.snapcast_audio_hub_wired_volume
+    name: Wired volume
+  - entity: number.snapcast_audio_hub_network_volume
+    name: Network volume
+  - entity: button.snapcast_audio_hub_restart_pipeline
+    name: Restart pipeline
+  - entity: button.snapcast_audio_hub_remove_entities
+    name: Remove entities

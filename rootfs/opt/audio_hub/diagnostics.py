@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+import asyncio
+from pathlib import Path
+
+from devices import list_audio_devices
+from process import run_checked
+from wireless import bluetooth_status
+
+
+async def collect(config: dict, pulse, snapcast, entities) -> dict:
+    devices_task = asyncio.create_task(list_audio_devices())
+    bt_task = asyncio.create_task(bluetooth_status())
+    pulse_info_task = asyncio.create_task(run_checked(["pactl", "info"], timeout=5))
+
+    devices = await devices_task
+    bt = await bt_task
+    pulse_rc, pulse_out = await pulse_info_task
+
+    snap_status = "running" if snapcast.running() else "stopped"
+    pulse_status = pulse.health() if pulse else "stopped"
+    active_source = infer_active_source(config)
+    health = {
+        "pipeline": "running" if snap_status == "running" and pulse_status == "running" else "degraded",
+        "snapcast": snap_status,
+        "pulse": pulse_status if pulse_rc == 0 else "unavailable",
+        "active_source": active_source,
+        "wired_input": "available" if devices.get("selected_capture") else "missing",
+        "network_input": "enabled" if config["network"]["enabled"] else "disabled",
+        "bluetooth_input": "enabled" if config["wireless"]["bluetooth_enabled"] else "disabled",
+        "entities": entities.health() if entities else "disabled",
+    }
+    return {
+        "summary": f"{health['pipeline']} / {active_source}",
+        "config": config,
+        "health": health,
+        "devices": devices,
+        "bluetooth": bt,
+        "pulse_info": pulse_out if pulse_rc == 0 else "",
+        "fifo_exists": Path("/tmp/audio-hub/snapcast.pcm").exists(),
+    }
+
+
+def infer_active_source(config: dict) -> str:
+    mode = config["audio"]["routing_mode"]
+    if mode == "mix":
+        enabled = []
+        if config["wired"]["enabled"]:
+            enabled.append("wired")
+        if config["network"]["enabled"]:
+            enabled.append("network")
+        if config["wireless"]["bluetooth_enabled"]:
+            enabled.append("bluetooth")
+        return "+".join(enabled) if enabled else "none"
+    return mode
+

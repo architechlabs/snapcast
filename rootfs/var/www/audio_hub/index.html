@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snapcast Audio Hub</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div>
+        <h1>Snapcast Audio Hub</h1>
+        <p id="subtitle">Starting</p>
+      </div>
+      <button id="restart" title="Restart audio pipeline">Restart</button>
+    </header>
+
+    <section class="grid">
+      <article class="panel">
+        <h2>Routing</h2>
+        <label>
+          Source mode
+          <select id="routingMode">
+            <option value="mix">Mix</option>
+            <option value="wired_only">Wired only</option>
+            <option value="network_only">Network only</option>
+            <option value="bluetooth_only">Bluetooth only</option>
+            <option value="fallback_duck">Ducking fallback</option>
+            <option value="source_switch">Source switch</option>
+          </select>
+        </label>
+        <label>
+          Latency
+          <input id="latency" type="range" min="40" max="1000" step="10">
+          <span id="latencyValue"></span>
+        </label>
+      </article>
+
+      <article class="panel">
+        <h2>Inputs</h2>
+        <div class="row">
+          <span>Wired input</span>
+          <button id="wiredToggle">Toggle</button>
+        </div>
+        <div class="row">
+          <span>Network input</span>
+          <button id="networkToggle">Toggle</button>
+        </div>
+        <div class="row">
+          <span>Bluetooth input</span>
+          <button id="bluetoothToggle">Toggle</button>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>Levels</h2>
+        <label>
+          Wired
+          <input id="wiredVolume" type="range" min="0" max="200" step="1">
+        </label>
+        <label>
+          Network
+          <input id="networkVolume" type="range" min="0" max="200" step="1">
+        </label>
+        <label>
+          Bluetooth
+          <input id="bluetoothVolume" type="range" min="0" max="200" step="1">
+        </label>
+      </article>
+
+      <article class="panel wide">
+        <h2>Status</h2>
+        <div id="status" class="status"></div>
+      </article>
+
+      <article class="panel wide">
+        <h2>Audio Devices</h2>
+        <pre id="devices"></pre>
+      </article>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
+

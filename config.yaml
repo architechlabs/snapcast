@@ -1,0 +1,131 @@
+name: Snapcast Audio Hub
+slug: snapcast_audio_hub
+description: Self-contained wired/wireless audio input mixer and Snapcast server for HAOS on Raspberry Pi
+version: 1.0.0
+url: https://local.addons/snapcast-audio-hub
+arch:
+  - aarch64
+  - armv7
+  - armhf
+  - amd64
+startup: services
+boot: auto
+init: false
+host_network: true
+apparmor: false
+audio: true
+usb: true
+hassio_api: true
+homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:speaker-multiple
+panel_title: Audio Hub
+webui: http://[HOST]:[PORT:8099]
+map:
+  - share:rw
+  - config:rw
+  - ssl
+devices:
+  - /dev/snd:/dev/snd:rwm
+ports:
+  1704/tcp: 1704
+  1705/tcp: 1705
+  1780/tcp: 1780
+  8099/tcp: 8099
+  5555/tcp: 5555
+  5556/udp: 5556
+ports_description:
+  1704/tcp: Snapcast client stream
+  1705/tcp: Snapcast JSON-RPC control
+  1780/tcp: Snapcast HTTP control interface
+  8099/tcp: Audio Hub web UI and API
+  5555/tcp: Optional raw PCM network input
+  5556/udp: Optional RTP network input
+services:
+  - mqtt:want
+options:
+  audio:
+    sample_rate: 48000
+    channels: 2
+    format: s16le
+    latency_ms: 120
+    buffer_ms: 400
+    routing_mode: mix
+  wired:
+    enabled: true
+    device: auto
+    profile: line_in
+    volume: 0.9
+    mute: false
+  network:
+    enabled: true
+    tcp_pcm_enabled: true
+    tcp_pcm_port: 5555
+    rtp_enabled: false
+    rtp_port: 5556
+    volume: 0.85
+  wireless:
+    bluetooth_enabled: false
+    bluetooth_pairable: false
+    volume: 0.85
+  snapcast:
+    stream_name: AudioHub
+    client_stream_port: 1704
+    jsonrpc_port: 1705
+    http_port: 1780
+    codec: pcm
+    buffer_ms: 1000
+  entities:
+    mqtt_enabled: true
+    mqtt_discovery_prefix: homeassistant
+    mqtt_base_topic: snapcast_audio_hub
+    ha_rest_enabled: true
+  ui:
+    port: 8099
+  diagnostics:
+    log_level: info
+    health_interval_sec: 10
+schema:
+  audio:
+    sample_rate: int(8000,192000)
+    channels: int(1,2)
+    format: list(s16le|s24le|s32le|float32le)
+    latency_ms: int(40,1000)
+    buffer_ms: int(100,5000)
+    routing_mode: list(mix|wired_only|network_only|bluetooth_only|fallback_duck|source_switch)
+  wired:
+    enabled: bool
+    device: str
+    profile: list(line_in|mic|aux)
+    volume: float(0,2)
+    mute: bool
+  network:
+    enabled: bool
+    tcp_pcm_enabled: bool
+    tcp_pcm_port: port
+    rtp_enabled: bool
+    rtp_port: port
+    volume: float(0,2)
+  wireless:
+    bluetooth_enabled: bool
+    bluetooth_pairable: bool
+    volume: float(0,2)
+  snapcast:
+    stream_name: str
+    client_stream_port: port
+    jsonrpc_port: port
+    http_port: port
+    codec: list(pcm|flac|ogg|opus)
+    buffer_ms: int(100,5000)
+  entities:
+    mqtt_enabled: bool
+    mqtt_discovery_prefix: str
+    mqtt_base_topic: str
+    ha_rest_enabled: bool
+  ui:
+    port: port
+  diagnostics:
+    log_level: list(debug|info|warning|error)
+    health_interval_sec: int(2,120)
+

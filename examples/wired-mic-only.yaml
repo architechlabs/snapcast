@@ -1,0 +1,15 @@
+audio:
+  routing_mode: wired_only
+  sample_rate: 48000
+  channels: 2
+  latency_ms: 120
+wired:
+  enabled: true
+  device: auto
+  profile: mic
+  volume: 1.0
+network:
+  enabled: false
+wireless:
+  bluetooth_enabled: false
+

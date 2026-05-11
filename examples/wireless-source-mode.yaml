@@ -1,0 +1,14 @@
+audio:
+  routing_mode: bluetooth_only
+  sample_rate: 48000
+  channels: 2
+  latency_ms: 180
+wired:
+  enabled: false
+network:
+  enabled: false
+wireless:
+  bluetooth_enabled: true
+  bluetooth_pairable: true
+  volume: 0.9
+
