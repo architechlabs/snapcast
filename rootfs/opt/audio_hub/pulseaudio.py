@@ -16,6 +16,7 @@ PULSE_ENV = {
     "PULSE_SERVER": f"unix:{PULSE_SOCKET}",
     "PULSE_STATE_PATH": "/data/pulse",
     "PULSE_COOKIE": "/data/pulse/cookie",
+    "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/run/dbus/system_bus_socket",
 }
 
 
@@ -41,14 +42,15 @@ class PulseAudioManager:
             [
                 "pulseaudio",
                 "--daemonize=no",
-                "--system=false",
+                "--system=true",
                 "--disable-shm=yes",
+                "--disallow-module-loading=false",
                 "-n",
                 "--exit-idle-time=-1",
                 "--disallow-exit=true",
                 "--log-target=stderr",
                 "-L",
-                f"module-native-protocol-unix socket={PULSE_SOCKET} auth-anonymous=1",
+                f"module-native-protocol-unix socket={PULSE_SOCKET} auth-anonymous=1 auth-cookie-enabled=0",
             ],
             env=PULSE_ENV,
         )
@@ -83,6 +85,7 @@ class PulseAudioManager:
             await self._setup_bluetooth()
 
         await self._apply_volumes()
+        await self._start_silence_keepalive(rate, channels)
 
         parec = ManagedProcess(
             "mix-monitor-to-snapfifo",
@@ -95,6 +98,28 @@ class PulseAudioManager:
         )
         self.processes["parec"] = parec
         await parec.start()
+
+    async def _start_silence_keepalive(self, rate: int, channels: int) -> None:
+        layout = "mono" if channels == 1 else "stereo"
+        silence = ManagedProcess(
+            "silence-keepalive",
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                f"anullsrc=channel_layout={layout}:sample_rate={rate}",
+                "-f",
+                "pulse",
+                "snap_hub_mix",
+            ],
+            env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=silence_keepalive"},
+        )
+        self.processes["silence-keepalive"] = silence
+        await silence.start()
 
     async def _wait_ready(self) -> None:
         for _ in range(50):
@@ -137,7 +162,7 @@ class PulseAudioManager:
         if device == "auto":
             device = devices.get("selected_capture")
         if not device:
-            LOG.warning("wired input enabled but no ALSA capture device was found")
+            LOG.info("wired input is enabled, but no USB/ALSA capture device is present yet")
             return
         source_name = "wired_input"
         try:

@@ -4,25 +4,244 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snapcast Audio Hub</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101417;
+      --surface: #161c20;
+      --surface-2: #1d252a;
+      --line: #324149;
+      --text: #eef5f7;
+      --muted: #9badb6;
+      --accent: #59c3aa;
+      --accent-2: #f0b45b;
+      --bad: #ef6b6b;
+      --good: #70d990;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .app {
+      width: min(1180px, calc(100% - 28px));
+      margin: 0 auto;
+      padding: 22px 0 32px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 24px; line-height: 1.2; letter-spacing: 0; }
+    h2 { font-size: 15px; margin-bottom: 12px; }
+    p { color: var(--muted); }
+
+    .summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 999px;
+      background: var(--accent-2);
+      box-shadow: 0 0 0 3px rgba(240, 180, 91, .14);
+    }
+
+    .dot.good {
+      background: var(--good);
+      box-shadow: 0 0 0 3px rgba(112, 217, 144, .14);
+    }
+
+    .dot.bad {
+      background: var(--bad);
+      box-shadow: 0 0 0 3px rgba(239, 107, 107, .14);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr .9fr;
+      gap: 12px;
+    }
+
+    .panel {
+      min-width: 0;
+      padding: 15px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+    }
+
+    .wide { grid-column: span 3; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 12px;
+      min-height: 38px;
+      border-top: 1px solid rgba(255,255,255,.05);
+    }
+
+    .row:first-of-type { border-top: 0; }
+    .row span, label span { color: var(--muted); font-size: 13px; }
+
+    label {
+      display: grid;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+
+    select, input, button {
+      font: inherit;
+    }
+
+    select {
+      width: 100%;
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #0f1417;
+      color: var(--text);
+      padding: 0 10px;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--accent);
+    }
+
+    button {
+      min-height: 36px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #061411;
+      padding: 0 12px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    button.secondary {
+      background: var(--surface-2);
+      border-color: var(--line);
+      color: var(--text);
+    }
+
+    button.off {
+      background: #2b3338;
+      color: var(--muted);
+      border-color: var(--line);
+    }
+
+    .status {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .tile {
+      min-height: 74px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface-2);
+    }
+
+    .tile strong {
+      display: block;
+      margin-bottom: 7px;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .tile span {
+      overflow-wrap: anywhere;
+      font-size: 15px;
+    }
+
+    pre {
+      max-height: 320px;
+      overflow: auto;
+      white-space: pre-wrap;
+      margin: 0;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #0c1012;
+      color: #c9d6dc;
+      font-size: 12px;
+    }
+
+    .ports {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .port {
+      padding: 10px;
+      border-radius: 7px;
+      background: #0f1417;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      font-size: 12px;
+    }
+
+    .port b {
+      display: block;
+      color: var(--text);
+      font-size: 15px;
+      margin-top: 4px;
+    }
+
+    @media (max-width: 860px) {
+      .topbar { align-items: stretch; flex-direction: column; }
+      .grid { grid-template-columns: 1fr; }
+      .wide { grid-column: span 1; }
+      .status, .ports { grid-template-columns: 1fr; }
+    }
+  </style>
 </head>
 <body>
   <main class="app">
     <header class="topbar">
       <div>
         <h1>Snapcast Audio Hub</h1>
-        <p id="subtitle">Starting</p>
+        <div class="summary"><i id="healthDot" class="dot"></i><span id="subtitle">Connecting</span></div>
       </div>
-      <button id="restart" title="Restart audio pipeline">Restart</button>
+      <button id="restart" class="secondary" title="Restart audio pipeline">Restart Pipeline</button>
     </header>
 
     <section class="grid">
       <article class="panel">
         <h2>Routing</h2>
         <label>
-          Source mode
+          <span>Source mode</span>
           <select id="routingMode">
-            <option value="mix">Mix</option>
+            <option value="mix">Mix inputs</option>
             <option value="wired_only">Wired only</option>
             <option value="network_only">Network only</option>
             <option value="bluetooth_only">Bluetooth only</option>
@@ -31,56 +250,143 @@
           </select>
         </label>
         <label>
-          Latency
+          <span>Latency <b id="latencyValue"></b></span>
           <input id="latency" type="range" min="40" max="1000" step="10">
-          <span id="latencyValue"></span>
         </label>
       </article>
 
       <article class="panel">
         <h2>Inputs</h2>
-        <div class="row">
-          <span>Wired input</span>
-          <button id="wiredToggle">Toggle</button>
-        </div>
-        <div class="row">
-          <span>Network input</span>
-          <button id="networkToggle">Toggle</button>
-        </div>
-        <div class="row">
-          <span>Bluetooth input</span>
-          <button id="bluetoothToggle">Toggle</button>
-        </div>
+        <div class="row"><span>Wired USB/line input</span><button id="wiredToggle">On</button></div>
+        <div class="row"><span>Network PCM bridge</span><button id="networkToggle">On</button></div>
+        <div class="row"><span>Bluetooth receiver</span><button id="bluetoothToggle">Off</button></div>
       </article>
 
       <article class="panel">
         <h2>Levels</h2>
-        <label>
-          Wired
-          <input id="wiredVolume" type="range" min="0" max="200" step="1">
-        </label>
-        <label>
-          Network
-          <input id="networkVolume" type="range" min="0" max="200" step="1">
-        </label>
-        <label>
-          Bluetooth
-          <input id="bluetoothVolume" type="range" min="0" max="200" step="1">
-        </label>
+        <label><span>Wired <b id="wiredVolumeValue"></b></span><input id="wiredVolume" type="range" min="0" max="200" step="1"></label>
+        <label><span>Network <b id="networkVolumeValue"></b></span><input id="networkVolume" type="range" min="0" max="200" step="1"></label>
+        <label><span>Bluetooth <b id="bluetoothVolumeValue"></b></span><input id="bluetoothVolume" type="range" min="0" max="200" step="1"></label>
       </article>
 
       <article class="panel wide">
         <h2>Status</h2>
         <div id="status" class="status"></div>
+        <div class="ports" id="ports"></div>
       </article>
 
       <article class="panel wide">
         <h2>Audio Devices</h2>
-        <pre id="devices"></pre>
+        <pre id="devices">Waiting for diagnostics...</pre>
       </article>
     </section>
   </main>
-  <script src="/static/app.js"></script>
+
+  <script>
+    const state = { status: null };
+    const $ = (id) => document.getElementById(id);
+    const ingressBase = () => {
+      const path = window.location.pathname.replace(/\/$/, "");
+      return path.startsWith("/app/") ? path : "";
+    };
+
+    async function api(path, options = {}) {
+      const response = await fetch(`${ingressBase()}${path}`, {
+        headers: { "content-type": "application/json" },
+        ...options,
+      });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      return response.json();
+    }
+
+    function tile(label, value) {
+      return `<div class="tile"><strong>${label}</strong><span>${value ?? "unknown"}</span></div>`;
+    }
+
+    function setButton(button, enabled) {
+      button.textContent = enabled ? "On" : "Off";
+      button.classList.toggle("off", !enabled);
+    }
+
+    function setRange(id, value) {
+      $(id).value = Math.round(value);
+      $(`${id}Value`).textContent = `${Math.round(value)}%`;
+    }
+
+    function render() {
+      const data = state.status;
+      if (!data) return;
+      const config = data.config || {};
+      const health = data.health || {};
+      const good = health.pipeline === "running";
+      $("healthDot").className = `dot ${good ? "good" : "bad"}`;
+      $("subtitle").textContent = data.summary || "Running";
+
+      $("routingMode").value = config.audio?.routing_mode || "mix";
+      $("latency").value = config.audio?.latency_ms || 120;
+      $("latencyValue").textContent = `${$("latency").value} ms`;
+
+      setButton($("wiredToggle"), Boolean(config.wired?.enabled));
+      setButton($("networkToggle"), Boolean(config.network?.enabled));
+      setButton($("bluetoothToggle"), Boolean(config.wireless?.bluetooth_enabled));
+      setRange("wiredVolume", (config.wired?.volume ?? 0.9) * 100);
+      setRange("networkVolume", (config.network?.volume ?? 0.85) * 100);
+      setRange("bluetoothVolume", (config.wireless?.volume ?? 0.85) * 100);
+
+      $("status").innerHTML = [
+        tile("Pipeline", health.pipeline),
+        tile("Snapcast", health.snapcast),
+        tile("PulseAudio", health.pulse),
+        tile("Active Source", health.active_source),
+        tile("Wired Input", health.wired_input),
+        tile("Network Input", health.network_input),
+        tile("Bluetooth", health.bluetooth_input),
+        tile("Entities", health.entities),
+      ].join("");
+
+      $("ports").innerHTML = [
+        `<div class="port">Snapcast stream<b>${config.snapcast?.client_stream_port ?? "?"}</b></div>`,
+        `<div class="port">Snapcast JSON-RPC<b>${config.snapcast?.jsonrpc_port ?? "?"}</b></div>`,
+        `<div class="port">Snapcast web/control<b>${config.snapcast?.http_port ?? "?"}</b></div>`,
+      ].join("");
+
+      $("devices").textContent = JSON.stringify(data.devices || {}, null, 2);
+    }
+
+    async function refresh() {
+      try {
+        state.status = await api("/api/status");
+        render();
+      } catch (err) {
+        $("healthDot").className = "dot bad";
+        $("subtitle").textContent = `UI disconnected: ${err.message}`;
+      }
+    }
+
+    async function patchConfig(payload) {
+      state.status = await api("/api/config", { method: "PATCH", body: JSON.stringify(payload) });
+      render();
+    }
+
+    $("restart").addEventListener("click", async () => {
+      await api("/api/restart", { method: "POST", body: "{}" });
+      await refresh();
+    });
+    $("routingMode").addEventListener("change", (event) => patchConfig({ audio: { routing_mode: event.target.value } }));
+    $("latency").addEventListener("input", (event) => $("latencyValue").textContent = `${event.target.value} ms`);
+    $("latency").addEventListener("change", (event) => patchConfig({ audio: { latency_ms: Number(event.target.value) } }));
+    $("wiredVolume").addEventListener("input", (event) => $("wiredVolumeValue").textContent = `${event.target.value}%`);
+    $("networkVolume").addEventListener("input", (event) => $("networkVolumeValue").textContent = `${event.target.value}%`);
+    $("bluetoothVolume").addEventListener("input", (event) => $("bluetoothVolumeValue").textContent = `${event.target.value}%`);
+    $("wiredVolume").addEventListener("change", (event) => patchConfig({ wired: { volume: Number(event.target.value) / 100 } }));
+    $("networkVolume").addEventListener("change", (event) => patchConfig({ network: { volume: Number(event.target.value) / 100 } }));
+    $("bluetoothVolume").addEventListener("change", (event) => patchConfig({ wireless: { volume: Number(event.target.value) / 100 } }));
+    $("wiredToggle").addEventListener("click", () => patchConfig({ wired: { enabled: !state.status?.config?.wired?.enabled } }));
+    $("networkToggle").addEventListener("click", () => patchConfig({ network: { enabled: !state.status?.config?.network?.enabled } }));
+    $("bluetoothToggle").addEventListener("click", () => patchConfig({ wireless: { bluetooth_enabled: !state.status?.config?.wireless?.bluetooth_enabled } }));
+
+    refresh();
+    setInterval(refresh, 5000);
+  </script>
 </body>
 </html>
-

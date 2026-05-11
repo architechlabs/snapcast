@@ -1,7 +1,7 @@
 name: Snapcast Audio Hub
 slug: snapcast_audio_hub
 description: Self-contained wired/wireless audio input mixer and Snapcast server for HAOS on Raspberry Pi
-version: 1.0.2
+version: 1.0.3
 url: https://local.addons/snapcast-audio-hub
 arch:
   - aarch64
@@ -29,16 +29,16 @@ map:
 devices:
   - /dev/snd:/dev/snd:rwm
 ports:
-  1704/tcp: 1704
-  1705/tcp: 1705
-  1780/tcp: 1780
+  41704/tcp: 41704
+  41705/tcp: 41705
+  41780/tcp: 41780
   41888/tcp: 41888
   5555/tcp: 5555
   5556/udp: 5556
 ports_description:
-  1704/tcp: Snapcast client stream
-  1705/tcp: Snapcast JSON-RPC control
-  1780/tcp: Snapcast HTTP control interface
+  41704/tcp: Audio Hub Snapcast client stream
+  41705/tcp: Audio Hub Snapcast JSON-RPC control
+  41780/tcp: Audio Hub Snapcast HTTP control interface
   41888/tcp: Audio Hub web UI and API
   5555/tcp: Optional raw PCM network input
   5556/udp: Optional RTP network input
@@ -71,9 +71,9 @@ options:
     volume: 0.85
   snapcast:
     stream_name: AudioHub
-    client_stream_port: 1704
-    jsonrpc_port: 1705
-    http_port: 1780
+    client_stream_port: 41704
+    jsonrpc_port: 41705
+    http_port: 41780
     codec: pcm
     buffer_ms: 1000
   entities:

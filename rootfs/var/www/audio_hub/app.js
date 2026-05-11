@@ -4,9 +4,13 @@ const state = {
 };
 
 const $ = (id) => document.getElementById(id);
+const ingressBase = () => {
+  const path = window.location.pathname.replace(/\/$/, "");
+  return path.startsWith("/app/") ? path : "";
+};
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const response = await fetch(`${ingressBase()}${path}`, {
     headers: { "content-type": "application/json" },
     ...options,
   });
@@ -78,4 +82,3 @@ $("bluetoothToggle").addEventListener("click", () => patchConfig({ wireless: { b
 
 refresh();
 setInterval(refresh, 5000);
-

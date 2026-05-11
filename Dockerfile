@@ -38,6 +38,6 @@ COPY rootfs/ /
 RUN chmod +x /usr/local/bin/audio-hub-run /usr/local/bin/audio-hub-device-event \
     && chmod +x /opt/audio_hub/*.py
 
-EXPOSE 1704 1705 1780 41888 5555 5556/udp
+EXPOSE 41704 41705 41780 41888 5555 5556/udp
 
 CMD ["/usr/local/bin/audio-hub-run"]

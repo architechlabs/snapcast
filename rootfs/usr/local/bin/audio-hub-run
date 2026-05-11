@@ -4,6 +4,10 @@ set -euo pipefail
 mkdir -p /data/audio-hub /data/pulse /run/dbus /tmp/audio-hub/pulse /share/snapcast_audio_hub
 chmod 700 /data/pulse || true
 rm -f /tmp/audio-hub/pulse/native /tmp/audio-hub/pulse/pid || true
+chown -R pulse:pulse /tmp/audio-hub/pulse /data/pulse 2>/dev/null || true
+export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/run/dbus/system_bus_socket"
+export PULSE_RUNTIME_PATH="/tmp/audio-hub/pulse"
+export PULSE_SERVER="unix:/tmp/audio-hub/pulse/native"
 
 if [ ! -S /run/dbus/system_bus_socket ]; then
   dbus-daemon --system --fork --nopidfile || true

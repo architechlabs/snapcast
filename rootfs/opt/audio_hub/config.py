@@ -7,6 +7,11 @@ from typing import Any
 OPTIONS_PATH = Path("/data/options.json")
 RUNTIME_PATH = Path("/data/audio-hub/runtime_config.json")
 FIXED_UI_PORT = 41888
+SNAPCAST_PORT_MIGRATIONS = {
+    "client_stream_port": (1704, 41704),
+    "jsonrpc_port": (1705, 41705),
+    "http_port": (1780, 41780),
+}
 
 DEFAULTS: dict[str, Any] = {
     "audio": {
@@ -39,9 +44,9 @@ DEFAULTS: dict[str, Any] = {
     },
     "snapcast": {
         "stream_name": "AudioHub",
-        "client_stream_port": 1704,
-        "jsonrpc_port": 1705,
-        "http_port": 1780,
+        "client_stream_port": 41704,
+        "jsonrpc_port": 41705,
+        "http_port": 41780,
         "codec": "pcm",
         "buffer_ms": 1000,
     },
@@ -87,6 +92,9 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
         config["network"][key] = int(config["network"][key])
     for key in ("client_stream_port", "jsonrpc_port", "http_port", "buffer_ms"):
         config["snapcast"][key] = int(config["snapcast"][key])
+    for key, (old_port, new_port) in SNAPCAST_PORT_MIGRATIONS.items():
+        if config["snapcast"][key] == old_port:
+            config["snapcast"][key] = new_port
     config["ui"]["port"] = FIXED_UI_PORT
     return config
 

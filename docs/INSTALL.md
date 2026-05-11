@@ -30,11 +30,11 @@ RTP can be enabled in options for senders that emit L16 RTP.
 
 ## Snapcast
 
-Snapcast ports:
+Audio Hub Snapcast ports use a high, add-on-specific range so they do not collide with another Snapcast add-on or host service:
 
-- `1704/tcp`: Snapcast client audio stream
-- `1705/tcp`: Snapcast JSON-RPC
-- `1780/tcp`: Snapcast HTTP UI/API
+- `41704/tcp`: Snapcast client audio stream
+- `41705/tcp`: Snapcast JSON-RPC
+- `41780/tcp`: Snapcast HTTP UI/API
 
 Add Snapcast clients on speakers, tablets, or other devices and point them at the HAOS host IP.
 
@@ -55,4 +55,3 @@ Bluetooth A2DP receiver support is best effort. HAOS often owns the Bluetooth ad
 ## Recovery
 
 The add-on restarts PulseAudio, bridge processes, and Snapserver when the health loop detects a degraded pipeline. USB device reconnects can be handled by restarting the pipeline from the web UI or MQTT button.
-
