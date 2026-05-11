@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-mkdir -p /data/audio-hub /data/pulse /run/pulse /run/dbus /tmp/audio-hub /share/snapcast_audio_hub
+mkdir -p /data/audio-hub /data/pulse /run/dbus /tmp/audio-hub/pulse /share/snapcast_audio_hub
 chmod 700 /data/pulse || true
+rm -f /tmp/audio-hub/pulse/native /tmp/audio-hub/pulse/pid || true
 
 if [ ! -S /run/dbus/system_bus_socket ]; then
   dbus-daemon --system --fork --nopidfile || true
 fi
 
 exec /usr/bin/python3 /opt/audio_hub/main.py
-

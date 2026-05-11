@@ -57,11 +57,15 @@ class ManagedProcess:
         return self.proc is not None and self.proc.returncode is None
 
 
-async def run_checked(command: Sequence[str], timeout: int = 10) -> tuple[int, str]:
+async def run_checked(command: Sequence[str], timeout: int = 10, env: dict[str, str] | None = None) -> tuple[int, str]:
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
     proc = await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        env=process_env,
     )
     try:
         output, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -70,4 +74,3 @@ async def run_checked(command: Sequence[str], timeout: int = 10) -> tuple[int, s
         await proc.wait()
         return 124, "timeout"
     return proc.returncode or 0, output.decode(errors="replace")
-

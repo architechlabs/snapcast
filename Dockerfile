@@ -2,9 +2,10 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM ${BUILD_FROM}
 
 ENV PYTHONUNBUFFERED=1 \
-    PULSE_RUNTIME_PATH=/run/pulse \
+    PULSE_RUNTIME_PATH=/tmp/audio-hub/pulse \
     PULSE_STATE_PATH=/data/pulse \
-    PULSE_COOKIE=/data/pulse/cookie
+    PULSE_COOKIE=/data/pulse/cookie \
+    PULSE_SERVER=unix:/tmp/audio-hub/pulse/native
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
@@ -37,6 +38,6 @@ COPY rootfs/ /
 RUN chmod +x /usr/local/bin/audio-hub-run /usr/local/bin/audio-hub-device-event \
     && chmod +x /opt/audio_hub/*.py
 
-EXPOSE 1704 1705 1780 8099 5555 5556/udp
+EXPOSE 1704 1705 1780 41888 5555 5556/udp
 
 CMD ["/usr/local/bin/audio-hub-run"]

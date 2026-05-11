@@ -4,13 +4,14 @@ from pathlib import Path
 
 from devices import list_audio_devices
 from process import run_checked
+from pulseaudio import PULSE_ENV
 from wireless import bluetooth_status
 
 
 async def collect(config: dict, pulse, snapcast, entities) -> dict:
     devices_task = asyncio.create_task(list_audio_devices())
     bt_task = asyncio.create_task(bluetooth_status())
-    pulse_info_task = asyncio.create_task(run_checked(["pactl", "info"], timeout=5))
+    pulse_info_task = asyncio.create_task(run_checked(["pactl", "info"], timeout=5, env=PULSE_ENV))
 
     devices = await devices_task
     bt = await bt_task
@@ -52,4 +53,3 @@ def infer_active_source(config: dict) -> str:
             enabled.append("bluetooth")
         return "+".join(enabled) if enabled else "none"
     return mode
-

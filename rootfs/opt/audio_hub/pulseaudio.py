@@ -9,6 +9,14 @@ from process import ManagedProcess, run_checked
 LOG = logging.getLogger("pulse")
 FIFO = Path("/tmp/audio-hub/snapcast.pcm")
 RTP_SDP = Path("/tmp/audio-hub/rtp.sdp")
+PULSE_DIR = Path("/tmp/audio-hub/pulse")
+PULSE_SOCKET = PULSE_DIR / "native"
+PULSE_ENV = {
+    "PULSE_RUNTIME_PATH": str(PULSE_DIR),
+    "PULSE_SERVER": f"unix:{PULSE_SOCKET}",
+    "PULSE_STATE_PATH": "/data/pulse",
+    "PULSE_COOKIE": "/data/pulse/cookie",
+}
 
 
 class PulseAudioManager:
@@ -20,6 +28,10 @@ class PulseAudioManager:
     async def start(self, devices: dict) -> None:
         await self.stop()
         FIFO.parent.mkdir(parents=True, exist_ok=True)
+        PULSE_DIR.mkdir(parents=True, exist_ok=True)
+        for stale in (PULSE_SOCKET, PULSE_DIR / "pid"):
+            if stale.exists():
+                stale.unlink()
         if FIFO.exists():
             FIFO.unlink()
         os.mkfifo(FIFO, 0o666)
@@ -29,12 +41,16 @@ class PulseAudioManager:
             [
                 "pulseaudio",
                 "--daemonize=no",
+                "--system=false",
+                "--disable-shm=yes",
+                "-n",
                 "--exit-idle-time=-1",
                 "--disallow-exit=true",
                 "--log-target=stderr",
                 "-L",
-                "module-native-protocol-unix auth-anonymous=1",
+                f"module-native-protocol-unix socket={PULSE_SOCKET} auth-anonymous=1",
             ],
+            env=PULSE_ENV,
         )
         self.processes["pulseaudio"] = pulse
         await pulse.start()
@@ -75,20 +91,21 @@ class PulseAudioManager:
                 "-lc",
                 f"exec parec -d snap_hub_mix.monitor --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
             ],
+            env=PULSE_ENV,
         )
         self.processes["parec"] = parec
         await parec.start()
 
     async def _wait_ready(self) -> None:
         for _ in range(50):
-            rc, _ = await run_checked(["pactl", "info"], timeout=3)
+            rc, _ = await run_checked(["pactl", "info"], timeout=3, env=PULSE_ENV)
             if rc == 0:
                 return
             await asyncio.sleep(0.2)
         raise RuntimeError("PulseAudio did not become ready")
 
     async def _pactl(self, *args: str) -> str:
-        rc, out = await run_checked(["pactl", *args], timeout=10)
+        rc, out = await run_checked(["pactl", *args], timeout=10, env=PULSE_ENV)
         if rc != 0:
             raise RuntimeError(f"pactl {' '.join(args)} failed: {out}")
         if args and args[0] == "load-module":
@@ -123,7 +140,11 @@ class PulseAudioManager:
             LOG.warning("wired input enabled but no ALSA capture device was found")
             return
         source_name = "wired_input"
-        await self._pactl("load-module", "module-alsa-source", f"device={device}", f"source_name={source_name}", f"source_properties=device.description=Wired_Input_{device}")
+        try:
+            await self._pactl("load-module", "module-alsa-source", f"device={device}", f"source_name={source_name}", f"source_properties=device.description=Wired_Input_{device}")
+        except RuntimeError as err:
+            LOG.warning("wired input %s could not be opened; continuing without wired source: %s", device, err)
+            return
         loopback_args = ["load-module", "module-loopback", f"source={source_name}", "sink=snap_hub_mix", f"latency_msec={latency}"]
         if self.config["audio"]["routing_mode"] == "fallback_duck":
             loopback_args.append("sink_input_properties=media.role=phone")
@@ -156,7 +177,7 @@ class PulseAudioManager:
                     "pulse",
                     "snap_hub_mix",
                 ],
-                env={"PULSE_PROP": "media.role=music application.name=tcp_pcm_bridge"},
+                env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=tcp_pcm_bridge"},
             )
             self.processes["tcp-pcm-bridge"] = tcp
             await tcp.start()
@@ -182,7 +203,7 @@ class PulseAudioManager:
                     "pulse",
                     "snap_hub_mix",
                 ],
-                env={"PULSE_PROP": "media.role=music application.name=rtp_bridge"},
+                env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=rtp_bridge"},
             )
             self.processes["rtp-bridge"] = rtp
             await rtp.start()
@@ -209,19 +230,19 @@ class PulseAudioManager:
         await self.set_volume("network", self.config["network"]["volume"])
         await self.set_volume("bluetooth", self.config["wireless"]["volume"])
         if self.config["wired"].get("mute"):
-            await run_checked(["pactl", "set-source-mute", "wired_input", "1"], timeout=5)
+            await run_checked(["pactl", "set-source-mute", "wired_input", "1"], timeout=5, env=PULSE_ENV)
 
     async def set_volume(self, target: str, volume: float) -> None:
         percent = f"{max(0, min(200, int(volume * 100)))}%"
         if target == "wired":
-            await run_checked(["pactl", "set-source-volume", "wired_input", percent], timeout=5)
+            await run_checked(["pactl", "set-source-volume", "wired_input", percent], timeout=5, env=PULSE_ENV)
         elif target in ("network", "bluetooth"):
-            rc, out = await run_checked(["pactl", "list", "sink-inputs", "short"], timeout=5)
+            rc, out = await run_checked(["pactl", "list", "sink-inputs", "short"], timeout=5, env=PULSE_ENV)
             if rc == 0:
                 for line in out.splitlines():
                     if target in line.lower() or "ffmpeg" in line.lower():
                         sink_input = line.split()[0]
-                        await run_checked(["pactl", "set-sink-input-volume", sink_input, percent], timeout=5)
+                        await run_checked(["pactl", "set-sink-input-volume", sink_input, percent], timeout=5, env=PULSE_ENV)
 
     async def stop(self) -> None:
         for process in reversed(list(self.processes.values())):

@@ -62,9 +62,6 @@ def parse_arecord_cards(output: str) -> list[dict]:
 def select_capture_device(capture: list[dict], named_sources: list[str]) -> str | None:
     if capture:
         return capture[0]["alsa"]
-    for preferred in ("default", "pulse"):
-        if preferred in named_sources:
-            return preferred
     return None
 
 
@@ -76,4 +73,3 @@ async def wait_for_capture_device(seconds: int = 30) -> str | None:
             return selected
         await asyncio.sleep(1)
     return None
-

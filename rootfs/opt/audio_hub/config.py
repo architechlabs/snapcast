@@ -6,6 +6,7 @@ from typing import Any
 
 OPTIONS_PATH = Path("/data/options.json")
 RUNTIME_PATH = Path("/data/audio-hub/runtime_config.json")
+FIXED_UI_PORT = 41888
 
 DEFAULTS: dict[str, Any] = {
     "audio": {
@@ -51,7 +52,7 @@ DEFAULTS: dict[str, Any] = {
         "ha_rest_enabled": True,
     },
     "ui": {
-        "port": 8099,
+        "port": 41888,
     },
     "diagnostics": {
         "log_level": "info",
@@ -86,7 +87,7 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
         config["network"][key] = int(config["network"][key])
     for key in ("client_stream_port", "jsonrpc_port", "http_port", "buffer_ms"):
         config["snapcast"][key] = int(config["snapcast"][key])
-    config["ui"]["port"] = int(config["ui"]["port"])
+    config["ui"]["port"] = FIXED_UI_PORT
     return config
 
 
@@ -105,4 +106,3 @@ def save_runtime_patch(current: dict[str, Any], patch: dict[str, Any]) -> dict[s
     RUNTIME_PATH.parent.mkdir(parents=True, exist_ok=True)
     RUNTIME_PATH.write_text(json.dumps(merged, indent=2, sort_keys=True), encoding="utf-8")
     return merged
-
