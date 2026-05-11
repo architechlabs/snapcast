@@ -1,6 +1,5 @@
 build_from:
-  aarch64: debian:bookworm-slim
-  armv7: debian:bookworm-slim
-  armhf: debian:bookworm-slim
-  amd64: debian:bookworm-slim
-
+  aarch64: ghcr.io/home-assistant/aarch64-base:latest
+  armv7: ghcr.io/home-assistant/armv7-base:latest
+  armhf: ghcr.io/home-assistant/armhf-base:latest
+  amd64: ghcr.io/home-assistant/amd64-base:latest

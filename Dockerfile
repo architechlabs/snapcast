@@ -1,38 +1,37 @@
-ARG BUILD_FROM=debian:bookworm-slim
+ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM ${BUILD_FROM}
 
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
+ENV PYTHONUNBUFFERED=1 \
     PULSE_RUNTIME_PATH=/run/pulse \
     PULSE_STATE_PATH=/data/pulse \
     PULSE_COOKIE=/data/pulse/cookie
 
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN sed -i -E 's/^#(.*\/community)$/\1/' /etc/apk/repositories \
+    && apk add --no-cache \
         alsa-utils \
+        alsa-plugins-pulse \
+        bash \
         bluez \
         ca-certificates \
+        coreutils \
         curl \
         dbus \
         ffmpeg \
         iproute2 \
         jq \
-        libasound2-plugins \
         netcat-openbsd \
         procps \
         pulseaudio \
-        pulseaudio-module-bluetooth \
+        pulseaudio-alsa \
+        pulseaudio-bluez \
         pulseaudio-utils \
         python3 \
-        python3-aiohttp \
-        python3-paho-mqtt \
-        python3-yaml \
-        snapserver \
-        tini \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+        py3-aiohttp \
+        py3-paho-mqtt \
+        py3-yaml \
+        snapcast-server
 
 COPY rootfs/ /
 RUN chmod +x /usr/local/bin/audio-hub-run /usr/local/bin/audio-hub-device-event \
@@ -40,6 +39,4 @@ RUN chmod +x /usr/local/bin/audio-hub-run /usr/local/bin/audio-hub-device-event 
 
 EXPOSE 1704 1705 1780 8099 5555 5556/udp
 
-ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["/usr/local/bin/audio-hub-run"]
-

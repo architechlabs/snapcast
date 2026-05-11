@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from process import ManagedProcess, run_checked
@@ -21,9 +22,7 @@ class PulseAudioManager:
         FIFO.parent.mkdir(parents=True, exist_ok=True)
         if FIFO.exists():
             FIFO.unlink()
-        rc, out = await run_checked(["mkfifo", str(FIFO)], timeout=5)
-        if rc != 0:
-            raise RuntimeError(f"failed to create audio fifo: {out}")
+        os.mkfifo(FIFO, 0o666)
 
         pulse = ManagedProcess(
             "pulseaudio",
@@ -33,7 +32,8 @@ class PulseAudioManager:
                 "--exit-idle-time=-1",
                 "--disallow-exit=true",
                 "--log-target=stderr",
-                "--load=module-native-protocol-unix auth-anonymous=1",
+                "-L",
+                "module-native-protocol-unix auth-anonymous=1",
             ],
         )
         self.processes["pulseaudio"] = pulse
