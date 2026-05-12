@@ -83,6 +83,103 @@
       gap: 12px;
     }
 
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+
+    .tabs button {
+      background: var(--surface-2);
+      border-color: var(--line);
+      color: var(--text);
+    }
+
+    .tabs button.active {
+      background: var(--accent);
+      color: #061411;
+    }
+
+    .hidden { display: none !important; }
+
+    .main-grid {
+      display: grid;
+      grid-template-columns: 1.1fr .9fr;
+      gap: 12px;
+    }
+
+    .hero {
+      min-height: 210px;
+      padding: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: linear-gradient(135deg, #162226 0%, #111719 52%, #1b2524 100%);
+    }
+
+    .hero h2 {
+      font-size: 22px;
+      margin-bottom: 8px;
+    }
+
+    .path {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .path-step {
+      min-height: 72px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: rgba(255,255,255,.04);
+    }
+
+    .path-step b {
+      display: block;
+      margin-bottom: 7px;
+    }
+
+    .path-step span {
+      color: var(--muted);
+      overflow-wrap: anywhere;
+      font-size: 13px;
+    }
+
+    .mix-controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .player-list {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .player-item {
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #0f1417;
+      display: grid;
+      gap: 5px;
+    }
+
+    .player-item strong {
+      overflow-wrap: anywhere;
+    }
+
+    .player-item span {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
     .panel {
       min-width: 0;
       padding: 15px;
@@ -281,7 +378,7 @@
 
     @media (max-width: 860px) {
       .topbar { align-items: stretch; flex-direction: column; }
-      .grid { grid-template-columns: 1fr; }
+      .grid, .main-grid, .path, .mix-controls { grid-template-columns: 1fr; }
       .wide { grid-column: span 1; }
       .status, .ports { grid-template-columns: 1fr; }
     }
@@ -297,7 +394,60 @@
       <button id="restart" class="secondary" title="Restart audio pipeline">Restart Pipeline</button>
     </header>
 
-    <section class="grid">
+    <nav class="tabs">
+      <button id="tabMain" class="active">Dashboard</button>
+      <button id="tabAdvanced">Settings / Advanced</button>
+    </nav>
+
+    <section id="mainView" class="main-grid">
+      <article class="hero">
+        <h2 id="mixTitle">Waiting for Music Assistant</h2>
+        <p id="mixSubtitle">The add-on will tap Music Assistant's Snapcast stream, mix it with the mic, then keep playback on the final AudioHub stream.</p>
+        <div class="path">
+          <div class="path-step"><b>Music</b><span id="musicPath">waiting</span></div>
+          <div class="path-step"><b>Mic</b><span id="micPath">waiting</span></div>
+          <div class="path-step"><b>Output</b><span id="outputPath">waiting</span></div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>Live Mix</h2>
+        <div class="row"><span>MA music bridge</span><button id="maBridgeToggle">On</button></div>
+        <div class="row"><span>Mic injection</span><button id="mainMicToggle">On</button></div>
+        <div class="row"><span>Auto-route Snapcast groups</span><button id="autoRouteToggle">On</button></div>
+        <div class="row"><span>Mic ducking</span><button id="duckingToggle">Off</button></div>
+        <div class="meter">
+          <div class="meter-head"><span>Final mixed signal</span><b id="mainMeterText">waiting</b></div>
+          <div class="meter-track"><div id="mainMeterFill" class="meter-fill"></div></div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>Mix Levels</h2>
+        <div class="mix-controls">
+          <label><span>Music <b id="mainMusicVolumeValue"></b></span><input id="mainMusicVolume" type="range" min="0" max="200" step="1"></label>
+          <label><span>Mic <b id="mainWiredVolumeValue"></b></span><input id="mainWiredVolume" type="range" min="0" max="200" step="1"></label>
+        </div>
+        <label>
+          <span>Routing mode</span>
+          <select id="mainRoutingMode">
+            <option value="mix">Mix inputs</option>
+            <option value="wired_only">Wired only</option>
+            <option value="network_only">Network only</option>
+            <option value="bluetooth_only">Bluetooth only</option>
+            <option value="fallback_duck">Ducking fallback</option>
+            <option value="source_switch">Source switch</option>
+          </select>
+        </label>
+      </article>
+
+      <article class="panel">
+        <h2>Players / Groups</h2>
+        <div id="playerList" class="player-list"></div>
+      </article>
+    </section>
+
+    <section id="advancedView" class="grid hidden">
       <article class="panel">
         <h2>Routing</h2>
         <label>
@@ -344,6 +494,7 @@
       <article class="panel">
         <h2>Levels</h2>
         <label><span>Wired <b id="wiredVolumeValue"></b></span><input id="wiredVolume" type="range" min="0" max="200" step="1"></label>
+        <label><span>Music <b id="musicVolumeValue"></b></span><input id="musicVolume" type="range" min="0" max="200" step="1"></label>
         <label><span>Network <b id="networkVolumeValue"></b></span><input id="networkVolume" type="range" min="0" max="200" step="1"></label>
         <label><span>Bluetooth <b id="bluetoothVolumeValue"></b></span><input id="bluetoothVolume" type="range" min="0" max="200" step="1"></label>
       </article>
@@ -425,22 +576,34 @@
       $("subtitle").textContent = data.summary || "Running";
 
       $("routingMode").value = config.audio?.routing_mode || "mix";
+      $("mainRoutingMode").value = config.audio?.routing_mode || "mix";
       $("latency").value = config.audio?.latency_ms || 120;
       $("latencyValue").textContent = `${$("latency").value} ms`;
       renderCaptureDevices(data.devices || {}, config.wired?.device || "auto");
 
       setButton($("wiredToggle"), Boolean(config.wired?.enabled));
+      setButton($("mainMicToggle"), Boolean(config.wired?.enabled));
+      setButton($("maBridgeToggle"), Boolean(config.music_assistant?.enabled));
+      setButton($("autoRouteToggle"), Boolean(config.music_assistant?.auto_route_players));
+      setButton($("duckingToggle"), Boolean(config.music_assistant?.ducking_enabled));
       setButton($("networkToggle"), Boolean(config.network?.enabled));
       setButton($("bluetoothToggle"), Boolean(config.wireless?.bluetooth_enabled));
       setRange("wiredVolume", (config.wired?.volume ?? 0.9) * 100);
+      setRange("mainWiredVolume", (config.wired?.volume ?? 0.9) * 100);
+      setRange("musicVolume", (config.music_assistant?.music_volume ?? 0.85) * 100);
+      setRange("mainMusicVolume", (config.music_assistant?.music_volume ?? 0.85) * 100);
       setRange("networkVolume", (config.network?.volume ?? 0.85) * 100);
       setRange("bluetoothVolume", (config.wireless?.volume ?? 0.85) * 100);
+      renderMainDashboard(data);
 
       $("status").innerHTML = [
         tile("Pipeline", health.pipeline),
         tile("Snapcast", health.snapcast),
         tile("PulseAudio", health.pulse),
         tile("Active Source", health.active_source),
+        tile("Music Assistant", health.music_assistant),
+        tile("MA Stream", health.music_stream || "none"),
+        tile("Final Stream", health.final_stream || "unknown"),
         tile("Wired Input", health.wired_input),
         tile("Input Detail", health.input_message),
         tile("Capture Mode", health.capture_mode),
@@ -466,6 +629,25 @@
       ].join("");
 
       $("devices").textContent = JSON.stringify(data.devices || {}, null, 2);
+    }
+
+    function renderMainDashboard(data) {
+      const bridge = data.snapcast_bridge || {};
+      const health = data.health || {};
+      const stateLabel = (bridge.state || health.music_assistant || "unknown").replaceAll("_", " ");
+      $("mixTitle").textContent = stateLabel === "mixing music" ? "Music + Mic Mix Active" : stateLabel;
+      $("mixSubtitle").textContent = bridge.error || "Music Assistant controls playback and groups; Audio Hub performs the final mix before Snapcast playback.";
+      $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream}` : "waiting for Music Assistant playback";
+      $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
+      $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
+      const groups = bridge.groups || [];
+      const clients = bridge.clients || [];
+      const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
+      $("playerList").innerHTML = groups.length ? groups.map((group) => {
+        const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
+        const safeId = String(group.id || "").replaceAll('"', "&quot;");
+        return `<div class="player-item"><strong>${group.name || group.id}</strong><span>Stream: ${group.stream || "none"}</span><span>${names}</span><div class="actions"><button class="secondary" data-action="use_final_stream" data-group="${safeId}">Use Mix</button><button class="secondary" data-action="use_ma_stream" data-group="${safeId}">Use MA Raw</button></div></div>`;
+      }).join("") : `<div class="player-item"><strong>No Snapcast groups yet</strong><span>Start a Snapcast client or play from Music Assistant.</span></div>`;
     }
 
     function renderCaptureDevices(devices, selected) {
@@ -503,14 +685,18 @@
         const level = await api("/api/input-level");
         const percent = Math.min(100, Math.round((level.peak || level.level || 0) * 140));
         $("meterFill").style.width = `${percent}%`;
+        $("mainMeterFill").style.width = `${percent}%`;
         const err = level.error ? ` - ${level.error.slice(0, 120)}` : "";
         const stage = level.stage ? ` / ${level.stage}` : "";
         const mix = typeof level.mix_level === "number" ? ` / mix ${Math.round(level.mix_level * 100)}%` : "";
         const rms = Math.round((level.level || 0) * 1000) / 10;
         const peak = Math.round((level.peak || 0) * 1000) / 10;
-        $("meterText").textContent = level.ok ? `${peak}% peak / ${rms}% rms ${level.state}${stage}${mix}` : `${level.state}${err}`;
+        const text = level.ok ? `${peak}% peak / ${rms}% rms ${level.state}${stage}${mix}` : `${level.state}${err}`;
+        $("meterText").textContent = text;
+        $("mainMeterText").textContent = text;
       } catch (err) {
         $("meterText").textContent = "unavailable";
+        $("mainMeterText").textContent = "unavailable";
       }
     }
 
@@ -558,14 +744,43 @@
     $("latency").addEventListener("change", (event) => patchConfig({ audio: { latency_ms: Number(event.target.value) } }));
     $("captureDevice").addEventListener("change", (event) => patchConfig({ wired: { device: event.target.value } }));
     $("wiredVolume").addEventListener("input", (event) => $("wiredVolumeValue").textContent = `${event.target.value}%`);
+    $("mainWiredVolume").addEventListener("input", (event) => $("mainWiredVolumeValue").textContent = `${event.target.value}%`);
+    $("musicVolume").addEventListener("input", (event) => $("musicVolumeValue").textContent = `${event.target.value}%`);
+    $("mainMusicVolume").addEventListener("input", (event) => $("mainMusicVolumeValue").textContent = `${event.target.value}%`);
     $("networkVolume").addEventListener("input", (event) => $("networkVolumeValue").textContent = `${event.target.value}%`);
     $("bluetoothVolume").addEventListener("input", (event) => $("bluetoothVolumeValue").textContent = `${event.target.value}%`);
     $("wiredVolume").addEventListener("change", (event) => patchConfig({ wired: { volume: Number(event.target.value) / 100 } }));
+    $("mainWiredVolume").addEventListener("change", (event) => patchConfig({ wired: { volume: Number(event.target.value) / 100 } }));
+    $("musicVolume").addEventListener("change", (event) => patchConfig({ music_assistant: { music_volume: Number(event.target.value) / 100 } }));
+    $("mainMusicVolume").addEventListener("change", (event) => patchConfig({ music_assistant: { music_volume: Number(event.target.value) / 100 } }));
     $("networkVolume").addEventListener("change", (event) => patchConfig({ network: { volume: Number(event.target.value) / 100 } }));
     $("bluetoothVolume").addEventListener("change", (event) => patchConfig({ wireless: { volume: Number(event.target.value) / 100 } }));
     $("wiredToggle").addEventListener("click", () => patchConfig({ wired: { enabled: !state.status?.config?.wired?.enabled } }));
+    $("mainMicToggle").addEventListener("click", () => patchConfig({ wired: { enabled: !state.status?.config?.wired?.enabled } }));
+    $("maBridgeToggle").addEventListener("click", () => patchConfig({ music_assistant: { enabled: !state.status?.config?.music_assistant?.enabled } }));
+    $("autoRouteToggle").addEventListener("click", () => patchConfig({ music_assistant: { auto_route_players: !state.status?.config?.music_assistant?.auto_route_players } }));
+    $("duckingToggle").addEventListener("click", () => patchConfig({ music_assistant: { ducking_enabled: !state.status?.config?.music_assistant?.ducking_enabled } }));
     $("networkToggle").addEventListener("click", () => patchConfig({ network: { enabled: !state.status?.config?.network?.enabled } }));
     $("bluetoothToggle").addEventListener("click", () => patchConfig({ wireless: { bluetooth_enabled: !state.status?.config?.wireless?.bluetooth_enabled } }));
+    $("mainRoutingMode").addEventListener("change", (event) => patchConfig({ audio: { routing_mode: event.target.value } }));
+    $("tabMain").addEventListener("click", () => {
+      $("mainView").classList.remove("hidden");
+      $("advancedView").classList.add("hidden");
+      $("tabMain").classList.add("active");
+      $("tabAdvanced").classList.remove("active");
+    });
+    $("tabAdvanced").addEventListener("click", () => {
+      $("mainView").classList.add("hidden");
+      $("advancedView").classList.remove("hidden");
+      $("tabMain").classList.remove("active");
+      $("tabAdvanced").classList.add("active");
+    });
+    $("playerList").addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      await api("/api/snapcast/action", { method: "POST", body: JSON.stringify({ action: button.dataset.action, group_id: button.dataset.group }) });
+      await refresh();
+    });
 
     refresh();
     refreshLevel();

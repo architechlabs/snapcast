@@ -38,6 +38,7 @@ class AudioHub:
         await self.entities.start()
         await self.start_web()
         asyncio.create_task(self.health_loop())
+        asyncio.create_task(self.snapcast_bridge_loop())
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, self.stopping.set)
@@ -73,7 +74,7 @@ class AudioHub:
             await asyncio.sleep(settle)
 
     async def start_web(self) -> None:
-        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.retry_wired_input, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip)
+        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.retry_wired_input, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip, self.snapcast_action)
         logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
         self.web_runner = web.AppRunner(app, access_log=None)
         await self.web_runner.setup()
@@ -96,6 +97,15 @@ class AudioHub:
             except Exception:
                 LOG.exception("health loop failed")
             await asyncio.sleep(interval)
+
+    async def snapcast_bridge_loop(self) -> None:
+        while not self.stopping.is_set():
+            try:
+                if self.snapcast.running() and self.pulse.health() == "running":
+                    await self.snapcast.ensure_music_assistant_bridge()
+            except Exception:
+                LOG.exception("Music Assistant Snapcast bridge loop failed")
+            await asyncio.sleep(2)
 
     async def ensure_processes(self) -> None:
         if self.restart_lock.locked():
@@ -142,6 +152,8 @@ class AudioHub:
             ("network", "rtp_port"),
             ("wireless", "bluetooth_enabled"),
             ("wireless", "bluetooth_pairable"),
+            ("music_assistant", "ducking_enabled"),
+            ("music_assistant", "ducking_level"),
         }
         for section, values in patch.items():
             if not isinstance(values, dict):
@@ -154,6 +166,8 @@ class AudioHub:
     async def apply_live_patch(self, patch: dict[str, Any]) -> None:
         if "wired" in patch and "volume" in patch["wired"]:
             await self.pulse.set_volume("wired", self.config["wired"]["volume"])
+        if "music_assistant" in patch and "music_volume" in patch["music_assistant"]:
+            await self.pulse.set_volume("music", self.config["music_assistant"]["music_volume"])
         if "network" in patch and "volume" in patch["network"]:
             await self.pulse.set_volume("network", self.config["network"]["volume"])
         if "wireless" in patch and "volume" in patch["wireless"]:
@@ -177,6 +191,21 @@ class AudioHub:
     async def monitor_clip(self) -> bytes:
         return await self.pulse.monitor_clip(3.0)
 
+    async def snapcast_action(self, payload: dict[str, Any]) -> dict[str, Any]:
+        action = payload.get("action")
+        if action == "use_final_stream":
+            result = await self.snapcast.set_group_stream(payload.get("group_id"), self.config["snapcast"]["stream_name"])
+        elif action == "use_ma_stream":
+            result = await self.snapcast.set_group_stream(payload.get("group_id"), self.snapcast.bridge_status.get("ma_stream"))
+        elif action == "mute_group":
+            result = await self.snapcast.set_group_mute(payload.get("group_id"), bool(payload.get("muted", True)))
+        elif action == "client_volume":
+            result = await self.snapcast.set_client_volume(payload.get("client_id"), int(payload.get("volume", 50)), payload.get("muted"))
+        else:
+            result = {"ok": False, "error": f"unknown action {action}"}
+        self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)
+        return result
+
     async def remove_entities(self) -> dict[str, Any]:
         return await self.entities.remove_discovery()
 
@@ -186,6 +215,12 @@ class AudioHub:
         patch: dict[str, Any] | None = None
         if topic == "wired_enabled":
             patch = {"wired": {"enabled": payload.upper() == "ON"}}
+        elif topic == "ma_bridge_enabled":
+            patch = {"music_assistant": {"enabled": payload.upper() == "ON"}}
+        elif topic == "ma_auto_route":
+            patch = {"music_assistant": {"auto_route_players": payload.upper() == "ON"}}
+        elif topic == "ducking_enabled":
+            patch = {"music_assistant": {"ducking_enabled": payload.upper() == "ON"}}
         elif topic == "network_enabled":
             patch = {"network": {"enabled": payload.upper() == "ON"}}
         elif topic == "bluetooth_enabled":
@@ -196,6 +231,8 @@ class AudioHub:
             patch = {"audio": {"latency_ms": int(float(payload))}}
         elif topic == "wired_volume":
             patch = {"wired": {"volume": float(payload) / 100.0}}
+        elif topic == "music_volume":
+            patch = {"music_assistant": {"music_volume": float(payload) / 100.0}}
         elif topic == "network_volume":
             patch = {"network": {"volume": float(payload) / 100.0}}
         elif topic == "restart_pipeline":

@@ -31,6 +31,7 @@ RUN sed -i -E 's/^#(.*\/community)$/\1/' /etc/apk/repositories \
         py3-aiohttp \
         py3-paho-mqtt \
         py3-yaml \
+        snapcast-client \
         snapcast-server
 
 COPY rootfs/ /

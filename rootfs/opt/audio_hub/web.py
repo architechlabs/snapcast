@@ -7,10 +7,11 @@ from aiohttp import web
 StatusProvider = Callable[[], Awaitable[dict[str, Any]]]
 PatchHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 ActionHandler = Callable[[], Awaitable[dict[str, Any]]]
+PayloadActionHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 ClipHandler = Callable[[], Awaitable[bytes]]
 
 
-def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, retry_wired_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler) -> web.Application:
+def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, retry_wired_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler, snapcast_action_handler: PayloadActionHandler) -> web.Application:
     app = web.Application()
     static_root = Path("/var/www/audio_hub")
 
@@ -43,6 +44,10 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         clip = await monitor_clip_handler()
         return web.Response(body=clip, content_type="audio/wav")
 
+    async def snapcast_action(request):
+        payload = await request.json()
+        return web.json_response(await snapcast_action_handler(payload))
+
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)
     app.router.add_get("/{prefix:.+}/api/status", status)
@@ -50,6 +55,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/input-level", input_level)
     app.router.add_get("/api/monitor.wav", monitor_clip)
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
+    app.router.add_post("/api/snapcast/action", snapcast_action)
+    app.router.add_post("/{prefix:.+}/api/snapcast/action", snapcast_action)
     app.router.add_patch("/api/config", patch_config)
     app.router.add_patch("/{prefix:.+}/api/config", patch_config)
     app.router.add_post("/api/restart", restart)

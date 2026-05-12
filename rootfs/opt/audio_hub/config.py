@@ -50,6 +50,16 @@ DEFAULTS: dict[str, Any] = {
         "codec": "pcm",
         "buffer_ms": 1000,
     },
+    "music_assistant": {
+        "enabled": True,
+        "stream_prefix": "MusicAssistant",
+        "tap_client_id": "audio-hub-ma-tap",
+        "auto_route_players": True,
+        "music_volume": 0.85,
+        "mic_injection_enabled": True,
+        "ducking_enabled": False,
+        "ducking_level": 0.35,
+    },
     "entities": {
         "mqtt_enabled": True,
         "mqtt_discovery_prefix": "homeassistant",
@@ -89,6 +99,10 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     config["wired"]["volume"] = clamp(float(config["wired"]["volume"]), 0.0, 2.0)
     config["network"]["volume"] = clamp(float(config["network"]["volume"]), 0.0, 2.0)
     config["wireless"]["volume"] = clamp(float(config["wireless"]["volume"]), 0.0, 2.0)
+    config["music_assistant"]["music_volume"] = clamp(float(config["music_assistant"].get("music_volume", 0.85)), 0.0, 2.0)
+    config["music_assistant"]["ducking_level"] = clamp(float(config["music_assistant"].get("ducking_level", 0.35)), 0.0, 1.0)
+    config["music_assistant"]["stream_prefix"] = str(config["music_assistant"].get("stream_prefix") or "MusicAssistant")
+    config["music_assistant"]["tap_client_id"] = str(config["music_assistant"].get("tap_client_id") or "audio-hub-ma-tap")
     for key in ("tcp_pcm_port", "rtp_port"):
         config["network"][key] = int(config["network"][key])
     for key in ("client_stream_port", "jsonrpc_port", "http_port", "buffer_ms"):

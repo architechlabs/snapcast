@@ -25,6 +25,9 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "snapcast": snap_status,
         "pulse": pulse_status if pulse_rc == 0 else "unavailable",
         "active_source": active_source,
+        "music_assistant": getattr(snapcast, "bridge_status", {}).get("state", "unknown") if snapcast else "unknown",
+        "music_stream": getattr(snapcast, "bridge_status", {}).get("ma_stream") if snapcast else None,
+        "final_stream": getattr(snapcast, "bridge_status", {}).get("final_stream") if snapcast else None,
         "wired_input": wired_input_state(devices, pulse),
         "input_message": input_message(devices),
         "capture_mode": getattr(pulse, "wired_capture_mode", "none") if pulse else "none",
@@ -40,6 +43,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "health": health,
         "devices": devices,
         "bluetooth": bt,
+        "snapcast_bridge": getattr(snapcast, "bridge_status", {}) if snapcast else {},
         "pulse_info": pulse_out if pulse_rc == 0 else "",
         "fifo_exists": Path("/tmp/audio-hub/snapcast.pcm").exists(),
     }

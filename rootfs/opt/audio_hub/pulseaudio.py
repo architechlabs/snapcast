@@ -91,13 +91,15 @@ class PulseAudioManager:
         routing = cfg["audio"]["routing_mode"]
 
         await self._pactl("load-module", "module-null-sink", "sink_name=snap_hub_mix", "sink_properties=device.description=Snapcast_Audio_Hub_Mix", f"rate={rate}", f"channels={channels}")
+        await self._pactl("load-module", "module-null-sink", "sink_name=ma_music_tap", "sink_properties=device.description=Music_Assistant_Tap", f"rate={rate}", f"channels={channels}")
         await self._pactl("set-default-sink", "snap_hub_mix")
 
         wired_enabled, network_enabled, bluetooth_enabled = self._enabled_routes(routing)
 
-        if routing == "fallback_duck":
+        if routing == "fallback_duck" or cfg.get("music_assistant", {}).get("ducking_enabled"):
             try:
-                await self._pactl("load-module", "module-role-ducking", "trigger_roles=phone", "ducking_roles=music,video", "volume=35%")
+                duck_level = int(float(cfg.get("music_assistant", {}).get("ducking_level", 0.35)) * 100)
+                await self._pactl("load-module", "module-role-ducking", "trigger_roles=phone", "ducking_roles=music,video", f"volume={duck_level}%")
             except RuntimeError as err:
                 LOG.warning("PulseAudio role ducking is not available; fallback_duck will run as a conservative mix: %s", err)
 
@@ -286,7 +288,7 @@ class PulseAudioManager:
             try:
                 await self._pactl("load-module", "module-alsa-source", *args)
                 loopback_args = ["load-module", "module-loopback", f"source={source_name}", "sink=snap_hub_mix", f"latency_msec={latency}"]
-                if self.config["audio"]["routing_mode"] == "fallback_duck":
+                if self.config["audio"]["routing_mode"] == "fallback_duck" or self.config.get("music_assistant", {}).get("ducking_enabled"):
                     loopback_args.append("sink_input_properties=media.role=phone")
                 await self._pactl(*loopback_args)
                 LOG.info("wired input attached through PulseAudio source using %s", " ".join(args))
@@ -509,6 +511,7 @@ class PulseAudioManager:
 
     async def _apply_volumes(self) -> None:
         await self.set_volume("wired", self.config["wired"]["volume"])
+        await self.set_volume("music", self.config["music_assistant"]["music_volume"])
         await self.set_volume("network", self.config["network"]["volume"])
         await self.set_volume("bluetooth", self.config["wireless"]["volume"])
         if self.config["wired"].get("mute"):
@@ -521,6 +524,8 @@ class PulseAudioManager:
                 await run_checked(["pactl", "set-source-volume", "wired_input", percent], timeout=5, env=PULSE_ENV)
             elif self.wired_capture_mode in ("ffmpeg_alsa_bridge", "haos_pulse_bridge"):
                 await self._set_sink_input_volume(["wired_alsa_bridge", "host_pulse_bridge"], percent)
+        elif target == "music":
+            await self._set_sink_input_volume(["ma_snapcast_tap", "ma_music_tap"], percent)
         elif target in ("network", "bluetooth"):
             names = ["tcp_pcm_bridge", "rtp_bridge"] if target == "network" else ["bluetooth"]
             await self._set_sink_input_volume(names, percent)
@@ -789,7 +794,7 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     return (
         f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
         f"parec -d {source_arg} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
-        f"| PULSE_SERVER={local_server} PULSE_PROP=application.name=host_pulse_bridge "
+        f"| PULSE_SERVER={local_server} PULSE_PROP='media.role=phone application.name=host_pulse_bridge' "
         f"pacat --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} -d snap_hub_mix"
     )
 
