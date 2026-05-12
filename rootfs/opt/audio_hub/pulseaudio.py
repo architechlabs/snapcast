@@ -40,6 +40,8 @@ class PulseAudioManager:
         self.wired_busy = False
         self.wired_attempted_devices: list[str] = []
         self.host_pulse_error = ""
+        self.host_pulse_env: dict[str, str] | None = None
+        self.host_pulse_source: str | None = None
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -350,6 +352,7 @@ class PulseAudioManager:
         source = await self._select_host_pulse_source(devices, host_env)
         if not source:
             return False
+        await self._prepare_host_pulse_source(host_env, source)
         cfg = self.config
         bridge = ManagedProcess(
             "host-pulse-capture-bridge",
@@ -365,8 +368,14 @@ class PulseAudioManager:
             LOG.warning("HAOS PulseAudio capture bridge failed for %s: %s", source, self.wired_error)
             return False
         self.wired_error = ""
+        self.host_pulse_env = host_env
+        self.host_pulse_source = source
         LOG.info("wired input attached through HAOS PulseAudio source %s", source)
         return True
+
+    async def _prepare_host_pulse_source(self, host_env: dict[str, str], source: str) -> None:
+        await run_checked(["pactl", "set-source-mute", source, "0"], timeout=4, env=host_env)
+        await run_checked(["pactl", "set-source-volume", source, "100%"], timeout=4, env=host_env)
 
     async def _host_pulse_env(self) -> dict[str, str] | None:
         for env in host_pulse_env_candidates():
@@ -546,6 +555,8 @@ class PulseAudioManager:
         self.wired_busy = False
         self.wired_attempted_devices = []
         self.host_pulse_error = ""
+        self.host_pulse_env = None
+        self.host_pulse_source = None
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -565,6 +576,19 @@ class PulseAudioManager:
             self.wired_source_loaded = False
             self.wired_error = "\n".join(bridge.last_output[-6:]) or "FFmpeg ALSA bridge is not running"
             return {"ok": False, "state": "capture_bridge_stopped", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": self.wired_error}
+        if self.wired_capture_mode == "haos_pulse_bridge":
+            level = await self._host_pulse_input_level()
+            if level["ok"] and level["state"] == "signal":
+                return level
+            mix_level = await self._mix_monitor_level()
+            if not level["ok"]:
+                return level
+            return {
+                **level,
+                "mix_level": mix_level.get("level", 0),
+                "mix_peak": mix_level.get("peak", 0),
+                "state": "quiet",
+            }
         if self.wired_capture_mode == "pulseaudio_source":
             command = [
                 "parec",
@@ -577,31 +601,58 @@ class PulseAudioManager:
             ]
             rc, raw, err = await run_binary(command, timeout=1, env=PULSE_ENV, max_bytes=64000)
         else:
-            command = [
-                "ffmpeg",
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-f",
-                "pulse",
-                "-i",
-                "snap_hub_mix.monitor",
-                "-t",
-                "0.6",
-                "-ac",
-                "1",
-                "-ar",
-                "16000",
-                "-f",
-                "s16le",
-                "-",
-            ]
-            rc, raw, err = await run_binary(command, timeout=3, env=PULSE_ENV, max_bytes=64000)
+            return await self._mix_monitor_level()
         if not raw:
             error = err.decode(errors="replace")[:400] or self.wired_error or "no PCM bytes received from mixer monitor"
             return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": error}
         level, peak = pcm16_level(raw)
-        return {"ok": rc in (0, 124), "state": "signal" if level > 0.015 else "quiet", "level": level, "peak": peak, "mode": self.wired_capture_mode}
+        return {"ok": rc in (0, 124), "state": signal_state(level, peak), "level": level, "peak": peak, "mode": self.wired_capture_mode}
+
+    async def _host_pulse_input_level(self) -> dict:
+        if not self.host_pulse_env or not self.host_pulse_source:
+            return {"ok": False, "state": "host_source_missing", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": "HAOS PulseAudio source is not selected"}
+        command = [
+            "parec",
+            "-d",
+            self.host_pulse_source,
+            "--raw",
+            "--format=s16le",
+            "--rate=16000",
+            "--channels=1",
+        ]
+        rc, raw, err = await run_binary(command, timeout=1, env=self.host_pulse_env, max_bytes=64000)
+        if not raw:
+            error = err.decode(errors="replace")[:400] or "no PCM bytes received from HAOS PulseAudio source"
+            return {"ok": False, "state": "host_source_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "source": self.host_pulse_source, "error": error}
+        level, peak = pcm16_level(raw)
+        return {"ok": rc in (0, 124), "state": signal_state(level, peak), "level": level, "peak": peak, "mode": self.wired_capture_mode, "source": self.host_pulse_source, "stage": "haos_source"}
+
+    async def _mix_monitor_level(self) -> dict:
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "pulse",
+            "-i",
+            "snap_hub_mix.monitor",
+            "-t",
+            "0.6",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-f",
+            "s16le",
+            "-",
+        ]
+        rc, raw, err = await run_binary(command, timeout=3, env=PULSE_ENV, max_bytes=64000)
+        if not raw:
+            error = err.decode(errors="replace")[:400] or self.wired_error or "no PCM bytes received from mixer monitor"
+            return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": error}
+        level, peak = pcm16_level(raw)
+        return {"ok": rc in (0, 124), "state": signal_state(level, peak), "level": level, "peak": peak, "mode": self.wired_capture_mode, "stage": "mixer"}
 
     async def monitor_clip(self, seconds: float = 3.0) -> bytes:
         duration = max(1.0, min(10.0, seconds))
@@ -724,8 +775,8 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     host_runtime = shlex.quote(host_env.get("PULSE_RUNTIME_PATH", ""))
     local_server = shlex.quote(PULSE_ENV["PULSE_SERVER"])
     source_arg = shlex.quote(source)
-    cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else ""
-    runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else ""
+    cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else " PULSE_COOKIE="
+    runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else " PULSE_RUNTIME_PATH="
     return (
         f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
         f"parec -d {source_arg} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
@@ -760,3 +811,7 @@ def pcm16_level(raw: bytes) -> tuple[float, float]:
     peak = max(abs(sample) for sample in samples) / 32768.0
     rms = (squares / len(samples)) ** 0.5 / 32768.0
     return round(rms, 4), round(peak, 4)
+
+
+def signal_state(level: float, peak: float) -> str:
+    return "signal" if level > 0.003 or peak > 0.02 else "quiet"

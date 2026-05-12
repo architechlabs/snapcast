@@ -15,6 +15,7 @@ class ManagedProcess:
         self.env = env or {}
         self.quiet_substrings = list(quiet_substrings or [])
         self.proc: asyncio.subprocess.Process | None = None
+        self.log_task: asyncio.Task | None = None
         self.started = False
         self.last_output: list[str] = []
 
@@ -30,13 +31,13 @@ class ManagedProcess:
             env=env,
         )
         self.started = True
-        asyncio.create_task(self._log_output())
+        self.log_task = asyncio.create_task(self._log_output(self.proc, self.proc.stdout))
 
-    async def _log_output(self) -> None:
-        if not self.proc or not self.proc.stdout:
+    async def _log_output(self, proc: asyncio.subprocess.Process, stdout: asyncio.StreamReader | None) -> None:
+        if not stdout:
             return
         while True:
-            line = await self.proc.stdout.readline()
+            line = await stdout.readline()
             if not line:
                 break
             text = line.decode(errors="replace").rstrip()
@@ -57,7 +58,15 @@ class ManagedProcess:
             except TimeoutError:
                 self.proc.kill()
                 await self.proc.wait()
+        if self.log_task and not self.log_task.done():
+            try:
+                await asyncio.wait_for(self.log_task, timeout=2)
+            except TimeoutError:
+                self.log_task.cancel()
+            except Exception:
+                LOG.debug("log task for %s ended while stopping", self.name, exc_info=True)
         self.proc = None
+        self.log_task = None
         self.started = False
 
     def running(self) -> bool:

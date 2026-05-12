@@ -504,7 +504,11 @@
         const percent = Math.min(100, Math.round((level.peak || level.level || 0) * 140));
         $("meterFill").style.width = `${percent}%`;
         const err = level.error ? ` - ${level.error.slice(0, 120)}` : "";
-        $("meterText").textContent = level.ok ? `${Math.round((level.level || 0) * 100)}% ${level.state}` : `${level.state}${err}`;
+        const stage = level.stage ? ` / ${level.stage}` : "";
+        const mix = typeof level.mix_level === "number" ? ` / mix ${Math.round(level.mix_level * 100)}%` : "";
+        const rms = Math.round((level.level || 0) * 1000) / 10;
+        const peak = Math.round((level.peak || 0) * 1000) / 10;
+        $("meterText").textContent = level.ok ? `${peak}% peak / ${rms}% rms ${level.state}${stage}${mix}` : `${level.state}${err}`;
       } catch (err) {
         $("meterText").textContent = "unavailable";
       }
