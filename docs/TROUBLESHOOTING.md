@@ -4,6 +4,8 @@
 
 Open the add-on web UI and check Audio Devices. If no capture device appears, verify the USB audio interface is visible to HAOS and restart the add-on after plugging it in.
 
+The Raspberry Pi 4 built-in 3.5 mm jack is output-only. Plugging a microphone or AUX cable into that jack will not create an ALSA capture device and cannot be fixed in software. Use a USB microphone, USB audio interface with line/mic input, or an ALSA-supported capture HAT.
+
 ## Snapcast clients connect but hear silence
 
 Check that PulseAudio, Snapcast, and Pipeline all report `running`. Confirm the source is enabled and the routing mode includes that source.
@@ -19,4 +21,3 @@ This is a HAOS platform constraint in many installs. Bluetooth may be owned by t
 ## Entity controls missing
 
 Install and configure the Home Assistant MQTT integration and an MQTT broker add-on. Without MQTT, the add-on can still publish REST status sensors and provide controls in the add-on web UI.
-

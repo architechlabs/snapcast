@@ -91,6 +91,11 @@ class AudioHub:
         if not self.snapcast.running() or self.pulse.health() != "running":
             LOG.warning("audio pipeline degraded; restarting")
             await self.restart_pipeline()
+            return
+        current_devices = self.status_cache.get("devices", {}) if self.status_cache else {}
+        if self.config["wired"]["enabled"] and current_devices.get("selected_capture") and not self.pulse.wired_source_loaded:
+            LOG.info("capture device appeared after startup; restarting pipeline to attach wired input")
+            await self.restart_pipeline()
 
     async def patch_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         self.config = save_runtime_patch(self.config, patch)

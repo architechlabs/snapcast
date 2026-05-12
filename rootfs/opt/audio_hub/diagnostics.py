@@ -25,7 +25,8 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "snapcast": snap_status,
         "pulse": pulse_status if pulse_rc == 0 else "unavailable",
         "active_source": active_source,
-        "wired_input": "available" if devices.get("selected_capture") else "missing",
+        "wired_input": "available" if devices.get("selected_capture") else devices.get("input_capability", "missing"),
+        "input_message": input_message(devices),
         "network_input": "enabled" if config["network"]["enabled"] else "disabled",
         "bluetooth_input": "enabled" if config["wireless"]["bluetooth_enabled"] else "disabled",
         "entities": entities.health() if entities else "disabled",
@@ -53,3 +54,12 @@ def infer_active_source(config: dict) -> str:
             enabled.append("bluetooth")
         return "+".join(enabled) if enabled else "none"
     return mode
+
+
+def input_message(devices: dict) -> str:
+    notes = devices.get("notes") or []
+    if notes:
+        return notes[0]
+    if devices.get("selected_capture"):
+        return f"Using {devices['selected_capture']}"
+    return "No capture input detected."

@@ -60,12 +60,13 @@ function render() {
   $("status").innerHTML = [
     tile("Pipeline", health.pipeline),
     tile("Snapcast", health.snapcast),
-    tile("PulseAudio", health.pulse),
-    tile("Active source", health.active_source),
-    tile("Wired", health.wired_input),
-    tile("Network", health.network_input),
-    tile("Bluetooth", health.bluetooth_input),
-    tile("Entities", health.entities),
+      tile("PulseAudio", health.pulse),
+      tile("Active source", health.active_source),
+      tile("Wired", health.wired_input),
+      tile("Input detail", health.input_message),
+      tile("Network", health.network_input),
+      tile("Bluetooth", health.bluetooth_input),
+      tile("Entities", health.entities),
   ].join("");
 
   $("devices").textContent = JSON.stringify(state.status.devices || {}, null, 2);

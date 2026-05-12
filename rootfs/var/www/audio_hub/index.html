@@ -217,6 +217,21 @@
       margin-top: 4px;
     }
 
+    .advisory {
+      display: none;
+      margin-bottom: 12px;
+      padding: 12px;
+      border: 1px solid rgba(240, 180, 91, .45);
+      border-radius: 7px;
+      background: rgba(240, 180, 91, .09);
+      color: #f4d49f;
+      line-height: 1.45;
+    }
+
+    .advisory.show {
+      display: block;
+    }
+
     @media (max-width: 860px) {
       .topbar { align-items: stretch; flex-direction: column; }
       .grid { grid-template-columns: 1fr; }
@@ -271,6 +286,7 @@
 
       <article class="panel wide">
         <h2>Status</h2>
+        <div id="advisory" class="advisory"></div>
         <div id="status" class="status"></div>
         <div class="ports" id="ports"></div>
       </article>
@@ -361,10 +377,17 @@
         tile("PulseAudio", health.pulse),
         tile("Active Source", health.active_source),
         tile("Wired Input", health.wired_input),
+        tile("Input Detail", health.input_message),
         tile("Network Input", health.network_input),
         tile("Bluetooth", health.bluetooth_input),
         tile("Entities", health.entities),
       ].join("");
+
+      const notes = data.devices?.notes || [];
+      const recommendations = data.devices?.recommended_hardware || [];
+      const advisoryText = [...notes, ...recommendations].join(" ");
+      $("advisory").textContent = advisoryText;
+      $("advisory").classList.toggle("show", Boolean(advisoryText));
 
       $("ports").innerHTML = [
         `<div class="port">Snapcast stream<b>${config.snapcast?.client_stream_port ?? "?"}</b></div>`,

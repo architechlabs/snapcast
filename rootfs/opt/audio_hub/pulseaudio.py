@@ -25,6 +25,7 @@ class PulseAudioManager:
         self.config = config
         self.processes: dict[str, ManagedProcess] = {}
         self.modules: list[str] = []
+        self.wired_source_loaded = False
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -181,6 +182,7 @@ class PulseAudioManager:
         if self.config["audio"]["routing_mode"] == "fallback_duck":
             loopback_args.append("sink_input_properties=media.role=phone")
         await self._pactl(*loopback_args)
+        self.wired_source_loaded = True
 
     async def _setup_network_sources(self) -> None:
         cfg = self.config
@@ -281,6 +283,7 @@ class PulseAudioManager:
             await process.stop()
         self.processes.clear()
         self.modules.clear()
+        self.wired_source_loaded = False
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")

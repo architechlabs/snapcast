@@ -7,10 +7,12 @@ This directory is a complete Home Assistant OS add-on. It accepts ALSA capture d
 1. Copy this `addon` directory into a Home Assistant add-on repository or into the local HAOS `addons` share.
 2. In Home Assistant, open Settings > Add-ons > Add-on Store > Check for updates.
 3. Install `Snapcast Audio Hub`.
-4. Plug in a USB audio interface, USB microphone, or line-in device.
+4. Plug in a USB audio interface, USB microphone, or ALSA-supported audio HAT with capture input.
 5. Start the add-on and open its web UI.
 
 The add-on uses `/dev/snd`, host networking, and USB access. These are required for reliable audio capture and Snapcast client discovery on HAOS.
+
+Important Raspberry Pi note: the built-in 3.5 mm jack on Raspberry Pi 1, 2, 3, and 4 is analogue audio output only. It is not a microphone, AUX, or line-in input. For capture, use USB audio hardware or an ALSA-supported ADC/HAT such as Codec Zero.
 
 ## Audio Pipeline
 
