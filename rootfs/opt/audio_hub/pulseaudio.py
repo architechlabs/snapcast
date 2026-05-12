@@ -356,7 +356,7 @@ class PulseAudioManager:
         cfg = self.config
         bridge = ManagedProcess(
             "host-pulse-capture-bridge",
-            ["bash", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"])],
+            ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"])],
             env=PULSE_ENV,
             quiet_substrings=["Failed to create secure directory"],
         )
@@ -577,17 +577,26 @@ class PulseAudioManager:
             self.wired_error = "\n".join(bridge.last_output[-6:]) or "FFmpeg ALSA bridge is not running"
             return {"ok": False, "state": "capture_bridge_stopped", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": self.wired_error}
         if self.wired_capture_mode == "haos_pulse_bridge":
-            level = await self._host_pulse_input_level()
-            if level["ok"] and level["state"] == "signal":
-                return level
+            host_bridge = self.processes.get("host-pulse-capture-bridge")
+            if not host_bridge or not host_bridge.running():
+                self.wired_source_loaded = False
+                self.wired_error = "\n".join(host_bridge.last_output[-6:]) if host_bridge else "HAOS PulseAudio bridge is not running"
+                return {
+                    "ok": False,
+                    "state": "capture_bridge_stopped",
+                    "level": 0,
+                    "peak": 0,
+                    "mode": self.wired_capture_mode,
+                    "source": self.host_pulse_source,
+                    "stage": "haos_bridge",
+                    "error": self.wired_error,
+                }
             mix_level = await self._mix_monitor_level()
-            if not level["ok"]:
-                return level
             return {
-                **level,
-                "mix_level": mix_level.get("level", 0),
-                "mix_peak": mix_level.get("peak", 0),
-                "state": "quiet",
+                **mix_level,
+                "source": self.host_pulse_source,
+                "stage": "snapcast_mix",
+                "bridge": "running",
             }
         if self.wired_capture_mode == "pulseaudio_source":
             command = [
@@ -622,8 +631,8 @@ class PulseAudioManager:
         ]
         rc, raw, err = await run_binary(command, timeout=1, env=self.host_pulse_env, max_bytes=64000)
         if not raw:
-            error = err.decode(errors="replace")[:400] or "no PCM bytes received from HAOS PulseAudio source"
-            return {"ok": False, "state": "host_source_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "source": self.host_pulse_source, "error": error}
+            error = err.decode(errors="replace")[:400] or "host source probe returned no PCM bytes"
+            return {"ok": False, "state": "host_probe_no_bytes", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "source": self.host_pulse_source, "error": error}
         level, peak = pcm16_level(raw)
         return {"ok": rc in (0, 124), "state": signal_state(level, peak), "level": level, "peak": peak, "mode": self.wired_capture_mode, "source": self.host_pulse_source, "stage": "haos_source"}
 

@@ -32,6 +32,15 @@ class ManagedProcess:
         )
         self.started = True
         self.log_task = asyncio.create_task(self._log_output(self.proc, self.proc.stdout))
+        self.log_task.add_done_callback(self._consume_log_task_exception)
+
+    def _consume_log_task_exception(self, task: asyncio.Task) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            LOG.debug("log task for %s ended with an error", self.name, exc_info=True)
 
     async def _log_output(self, proc: asyncio.subprocess.Process, stdout: asyncio.StreamReader | None) -> None:
         if not stdout:
@@ -58,13 +67,13 @@ class ManagedProcess:
             except TimeoutError:
                 self.proc.kill()
                 await self.proc.wait()
-        if self.log_task and not self.log_task.done():
-            try:
-                await asyncio.wait_for(self.log_task, timeout=2)
-            except TimeoutError:
-                self.log_task.cancel()
-            except Exception:
-                LOG.debug("log task for %s ended while stopping", self.name, exc_info=True)
+        if self.log_task:
+            if not self.log_task.done():
+                try:
+                    await asyncio.wait_for(self.log_task, timeout=2)
+                except TimeoutError:
+                    self.log_task.cancel()
+            self._consume_log_task_exception(self.log_task)
         self.proc = None
         self.log_task = None
         self.started = False
