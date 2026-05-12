@@ -20,15 +20,12 @@ PULSE_ENV = {
     "PULSE_COOKIE": "/data/pulse/cookie",
     "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/run/dbus/system_bus_socket",
 }
-HOST_PULSE_ENV = {
-    key: value
-    for key, value in {
-        "PULSE_SERVER": os.environ.get("AUDIO_HUB_HOST_PULSE_SERVER", ""),
-        "PULSE_COOKIE": os.environ.get("AUDIO_HUB_HOST_PULSE_COOKIE", ""),
-        "PULSE_RUNTIME_PATH": os.environ.get("AUDIO_HUB_HOST_PULSE_RUNTIME_PATH", ""),
-    }.items()
-    if value
-}
+HOST_PULSE_SOCKET_CANDIDATES = (
+    "/run/audio/pulse.sock",
+    "/run/audio/pulse/native",
+    "/run/pulse/native",
+    "/var/run/pulse/native",
+)
 
 
 class PulseAudioManager:
@@ -42,6 +39,7 @@ class PulseAudioManager:
         self.wired_error = ""
         self.wired_busy = False
         self.wired_attempted_devices: list[str] = []
+        self.host_pulse_error = ""
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -346,14 +344,17 @@ class PulseAudioManager:
         return True
 
     async def _start_host_pulse_bridge(self, devices: dict) -> bool:
-        source = await self._select_host_pulse_source(devices)
+        host_env = await self._host_pulse_env()
+        if not host_env:
+            return False
+        source = await self._select_host_pulse_source(devices, host_env)
         if not source:
             return False
         cfg = self.config
         bridge = ManagedProcess(
             "host-pulse-capture-bridge",
-            ["bash", "-lc", host_pulse_bridge_command(source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"])],
-            env={**HOST_PULSE_ENV, **PULSE_ENV},
+            ["bash", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"])],
+            env=PULSE_ENV,
             quiet_substrings=["Failed to create secure directory"],
         )
         self.processes["host-pulse-capture-bridge"] = bridge
@@ -367,11 +368,22 @@ class PulseAudioManager:
         LOG.info("wired input attached through HAOS PulseAudio source %s", source)
         return True
 
-    async def _select_host_pulse_source(self, devices: dict) -> str | None:
-        if not host_pulse_enabled():
+    async def _host_pulse_env(self) -> dict[str, str] | None:
+        for env in host_pulse_env_candidates():
+            rc, out = await run_checked(["pactl", "info"], timeout=3, env=env)
+            if rc == 0:
+                self.host_pulse_error = ""
+                LOG.info("HAOS PulseAudio service detected at %s", env.get("PULSE_SERVER"))
+                return env
+            self.host_pulse_error = out.strip()
+        return None
+
+    async def _select_host_pulse_source(self, devices: dict, host_env: dict[str, str]) -> str | None:
+        if not host_env:
             return None
-        rc, out = await run_checked(["pactl", "list", "sources", "short"], timeout=4, env=HOST_PULSE_ENV)
+        rc, out = await run_checked(["pactl", "list", "sources", "short"], timeout=4, env=host_env)
         if rc != 0:
+            self.host_pulse_error = out.strip()
             return None
         sources = []
         for line in out.splitlines():
@@ -383,13 +395,16 @@ class PulseAudioManager:
                 continue
             sources.append(name)
         if not sources:
+            self.host_pulse_error = "HAOS PulseAudio is reachable, but it exposes no capture source"
             return None
         tokens = host_pulse_match_tokens(devices)
         for source in sources:
             lowered = source.lower()
             if any(token and token in lowered for token in tokens):
                 return source
-        return sources[0] if len(sources) == 1 else None
+        selected = sources[0]
+        LOG.info("using first HAOS PulseAudio capture source %s; available sources: %s", selected, ", ".join(sources))
+        return selected
 
     async def _busy_diagnostics(self, device: str) -> str:
         match = parse_hw_device(device)
@@ -530,6 +545,7 @@ class PulseAudioManager:
         self.wired_error = ""
         self.wired_busy = False
         self.wired_attempted_devices = []
+        self.host_pulse_error = ""
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -669,9 +685,25 @@ def is_busy_error(error: str) -> bool:
     return "resource busy" in lower or "device or resource busy" in lower or "busy holder" in lower
 
 
-def host_pulse_enabled() -> bool:
-    server = HOST_PULSE_ENV.get("PULSE_SERVER", "")
-    return bool(server and server != PULSE_ENV["PULSE_SERVER"] and str(PULSE_SOCKET) not in server)
+def host_pulse_env_candidates() -> list[dict[str, str]]:
+    candidates = []
+    servers = []
+    env_server = os.environ.get("AUDIO_HUB_HOST_PULSE_SERVER", "")
+    if env_server and env_server != PULSE_ENV["PULSE_SERVER"] and str(PULSE_SOCKET) not in env_server:
+        servers.append(env_server)
+    for socket in HOST_PULSE_SOCKET_CANDIDATES:
+        if Path(socket).exists():
+            servers.append(f"unix:{socket}")
+    for server in dedupe(servers):
+        env = {"PULSE_SERVER": server}
+        cookie = os.environ.get("AUDIO_HUB_HOST_PULSE_COOKIE", "")
+        runtime = os.environ.get("AUDIO_HUB_HOST_PULSE_RUNTIME_PATH", "")
+        if cookie:
+            env["PULSE_COOKIE"] = cookie
+        if runtime and str(PULSE_DIR) not in runtime:
+            env["PULSE_RUNTIME_PATH"] = runtime
+        candidates.append(env)
+    return candidates
 
 
 def host_pulse_match_tokens(devices: dict) -> list[str]:
@@ -686,10 +718,10 @@ def host_pulse_match_tokens(devices: dict) -> list[str]:
     return tokens
 
 
-def host_pulse_bridge_command(source: str, rate: int, channels: int, audio_format: str) -> str:
-    host_server = shlex.quote(HOST_PULSE_ENV.get("PULSE_SERVER", ""))
-    host_cookie = shlex.quote(HOST_PULSE_ENV.get("PULSE_COOKIE", ""))
-    host_runtime = shlex.quote(HOST_PULSE_ENV.get("PULSE_RUNTIME_PATH", ""))
+def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, channels: int, audio_format: str) -> str:
+    host_server = shlex.quote(host_env.get("PULSE_SERVER", ""))
+    host_cookie = shlex.quote(host_env.get("PULSE_COOKIE", ""))
+    host_runtime = shlex.quote(host_env.get("PULSE_RUNTIME_PATH", ""))
     local_server = shlex.quote(PULSE_ENV["PULSE_SERVER"])
     source_arg = shlex.quote(source)
     cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else ""

@@ -50,6 +50,7 @@ class AudioHub:
             self.devices = await list_audio_devices()
             await self.pulse.start(self.devices)
             await self.snapcast.start()
+            self.last_capture_retry = time.monotonic()
 
     async def restart_pipeline(self) -> dict[str, Any]:
         async with self.restart_lock:
@@ -63,6 +64,7 @@ class AudioHub:
             self.devices = await list_audio_devices()
             await self.pulse.start(self.devices)
             await self.snapcast.start()
+            self.last_capture_retry = time.monotonic()
         return {"ok": True}
 
     async def wait_for_device_settle(self) -> None:

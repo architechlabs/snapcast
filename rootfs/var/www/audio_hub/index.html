@@ -445,6 +445,7 @@
         tile("Input Detail", health.input_message),
         tile("Capture Mode", health.capture_mode),
         tile("Capture Error", health.capture_error || "none"),
+        tile("HAOS Audio", health.haos_audio_error || "ok / not needed"),
         tile("Network Input", health.network_input),
         tile("Bluetooth", health.bluetooth_input),
         tile("Entities", health.entities),
@@ -453,7 +454,8 @@
       const notes = data.devices?.notes || [];
       const recommendations = data.devices?.recommended_hardware || [];
       const captureError = data.health?.capture_error ? [`Capture issue: ${data.health.capture_error}`] : [];
-      const advisoryText = [...captureError, ...notes, ...recommendations].join(" ");
+      const haosError = data.health?.haos_audio_error ? [`HAOS audio bridge: ${data.health.haos_audio_error}`] : [];
+      const advisoryText = [...captureError, ...haosError, ...notes, ...recommendations].join(" ");
       $("advisory").textContent = advisoryText;
       $("advisory").classList.toggle("show", Boolean(advisoryText));
 

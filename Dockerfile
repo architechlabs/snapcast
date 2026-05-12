@@ -2,10 +2,7 @@ ARG BUILD_FROM=ghcr.io/home-assistant/base:latest
 FROM ${BUILD_FROM}
 
 ENV PYTHONUNBUFFERED=1 \
-    PULSE_RUNTIME_PATH=/tmp/audio-hub/pulse \
-    PULSE_STATE_PATH=/data/pulse \
-    PULSE_COOKIE=/data/pulse/cookie \
-    PULSE_SERVER=unix:/tmp/audio-hub/pulse/native
+    PULSE_STATE_PATH=/data/pulse
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 

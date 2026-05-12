@@ -171,7 +171,6 @@ def capture_candidates_for_device(device: dict, named_sources: list[str]) -> lis
         f"plughw:{card},{dev}" if card else None,
         f"dsnoop:CARD={card_id},DEV={dev}" if card_id else None,
         f"dsnoop:CARD={card},DEV={dev}" if card else None,
-        f"default:CARD={card_id}" if card_id else None,
         f"sysdefault:CARD={card_id}" if card_id else None,
         device.get("alsa"),
         f"hw:{card},{dev}" if card else None,
@@ -209,7 +208,6 @@ def capture_source_is_usable(source: str) -> bool:
     return source.startswith((
         "plughw:",
         "dsnoop:",
-        "default:",
         "sysdefault:",
         "usbstream:",
     ))

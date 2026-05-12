@@ -5,7 +5,14 @@ mkdir -p /data/audio-hub /data/pulse /run/dbus /tmp/audio-hub/pulse /share/snapc
 chmod 700 /data/pulse || true
 rm -f /tmp/audio-hub/pulse/native /tmp/audio-hub/pulse/pid || true
 chown -R pulse:pulse /tmp/audio-hub/pulse /data/pulse 2>/dev/null || true
-export AUDIO_HUB_HOST_PULSE_SERVER="${PULSE_SERVER:-}"
+case "${PULSE_SERVER:-}" in
+  ""|unix:/tmp/audio-hub/pulse/native|/tmp/audio-hub/pulse/native)
+    export AUDIO_HUB_HOST_PULSE_SERVER=""
+    ;;
+  *)
+    export AUDIO_HUB_HOST_PULSE_SERVER="${PULSE_SERVER}"
+    ;;
+esac
 export AUDIO_HUB_HOST_PULSE_COOKIE="${PULSE_COOKIE:-}"
 export AUDIO_HUB_HOST_PULSE_RUNTIME_PATH="${PULSE_RUNTIME_PATH:-}"
 export DBUS_SYSTEM_BUS_ADDRESS="unix:path=/run/dbus/system_bus_socket"
