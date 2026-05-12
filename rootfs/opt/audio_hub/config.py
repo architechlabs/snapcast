@@ -62,6 +62,7 @@ DEFAULTS: dict[str, Any] = {
     "diagnostics": {
         "log_level": "info",
         "health_interval_sec": 10,
+        "startup_device_settle_sec": 4,
     },
 }
 
@@ -96,6 +97,7 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
         if config["snapcast"][key] == old_port:
             config["snapcast"][key] = new_port
     config["ui"]["port"] = FIXED_UI_PORT
+    config["diagnostics"]["startup_device_settle_sec"] = int(config["diagnostics"].get("startup_device_settle_sec", 4))
     return config
 
 

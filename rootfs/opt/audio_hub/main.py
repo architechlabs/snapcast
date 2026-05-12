@@ -44,6 +44,7 @@ class AudioHub:
 
     async def start_pipeline(self) -> None:
         async with self.restart_lock:
+            await self.wait_for_device_settle()
             self.devices = await list_audio_devices()
             await self.pulse.start(self.devices)
             await self.snapcast.start()
@@ -56,10 +57,16 @@ class AudioHub:
             self.pulse = PulseAudioManager(self.config)
             self.snapcast = SnapcastManager(self.config)
             self.entities.config = self.config
+            await self.wait_for_device_settle()
             self.devices = await list_audio_devices()
             await self.pulse.start(self.devices)
             await self.snapcast.start()
         return {"ok": True}
+
+    async def wait_for_device_settle(self) -> None:
+        settle = int(self.config["diagnostics"].get("startup_device_settle_sec", 0))
+        if settle > 0:
+            await asyncio.sleep(settle)
 
     async def start_web(self) -> None:
         app = create_app(self.status, self.patch_config, self.restart_pipeline, self.reload_devices, self.remove_entities)

@@ -169,12 +169,22 @@ class PulseAudioManager:
         device = self.config["wired"]["device"]
         if device == "auto":
             device = devices.get("selected_capture")
+        else:
+            device = normalize_capture_device(device, devices)
         if not device:
             LOG.info("wired input is enabled, but no USB/ALSA capture device is present yet")
             return
         source_name = "wired_input"
         try:
-            await self._pactl("load-module", "module-alsa-source", f"device={device}", f"source_name={source_name}", f"source_properties=device.description=Wired_Input_{device}")
+            await self._pactl(
+                "load-module",
+                "module-alsa-source",
+                f"device={device}",
+                f"source_name={source_name}",
+                f"rate={self.config['audio']['sample_rate']}",
+                f"channels={self.config['audio']['channels']}",
+                f"source_properties=device.description=Wired_Input_{device}",
+            )
         except RuntimeError as err:
             LOG.warning("wired input %s could not be opened; continuing without wired source: %s", device, err)
             return
@@ -293,3 +303,18 @@ class PulseAudioManager:
         if pulse and pulse.running():
             return "partial"
         return "stopped"
+
+
+def normalize_capture_device(device: str, devices: dict) -> str:
+    if device in ("", "auto"):
+        return devices.get("selected_capture")
+    for candidate in devices.get("capture", []):
+        values = {
+            candidate.get("alsa"),
+            candidate.get("plughw"),
+            f"hw:{candidate.get('card')},{candidate.get('device')}",
+            f"plughw:{candidate.get('card')},{candidate.get('device')}",
+        }
+        if device in values:
+            return candidate.get("plughw") or candidate.get("alsa") or device
+    return device

@@ -232,6 +232,10 @@
       display: block;
     }
 
+    .device-select {
+      margin-top: 12px;
+    }
+
     @media (max-width: 860px) {
       .topbar { align-items: stretch; flex-direction: column; }
       .grid { grid-template-columns: 1fr; }
@@ -267,6 +271,12 @@
         <label>
           <span>Latency <b id="latencyValue"></b></span>
           <input id="latency" type="range" min="40" max="1000" step="10">
+        </label>
+        <label class="device-select">
+          <span>Capture device</span>
+          <select id="captureDevice">
+            <option value="auto">Auto detect</option>
+          </select>
         </label>
       </article>
 
@@ -363,6 +373,7 @@
       $("routingMode").value = config.audio?.routing_mode || "mix";
       $("latency").value = config.audio?.latency_ms || 120;
       $("latencyValue").textContent = `${$("latency").value} ms`;
+      renderCaptureDevices(data.devices || {}, config.wired?.device || "auto");
 
       setButton($("wiredToggle"), Boolean(config.wired?.enabled));
       setButton($("networkToggle"), Boolean(config.network?.enabled));
@@ -398,6 +409,26 @@
       $("devices").textContent = JSON.stringify(data.devices || {}, null, 2);
     }
 
+    function renderCaptureDevices(devices, selected) {
+      const select = $("captureDevice");
+      const choices = [{ value: "auto", label: "Auto detect" }];
+      for (const device of devices.capture || []) {
+        const value = device.plughw || device.alsa;
+        choices.push({
+          value,
+          label: `${value} - ${device.description || device.card_name || "capture device"}`,
+        });
+      }
+      const oldValue = select.value;
+      select.innerHTML = choices.map((choice) => {
+        const isSelected = choice.value === selected || (!selected && choice.value === "auto");
+        return `<option value="${choice.value}" ${isSelected ? "selected" : ""}>${choice.label}</option>`;
+      }).join("");
+      if ([...select.options].some((option) => option.value === oldValue) && document.activeElement === select) {
+        select.value = oldValue;
+      }
+    }
+
     async function refresh() {
       try {
         state.status = await api("/api/status");
@@ -420,6 +451,7 @@
     $("routingMode").addEventListener("change", (event) => patchConfig({ audio: { routing_mode: event.target.value } }));
     $("latency").addEventListener("input", (event) => $("latencyValue").textContent = `${event.target.value} ms`);
     $("latency").addEventListener("change", (event) => patchConfig({ audio: { latency_ms: Number(event.target.value) } }));
+    $("captureDevice").addEventListener("change", (event) => patchConfig({ wired: { device: event.target.value } }));
     $("wiredVolume").addEventListener("input", (event) => $("wiredVolumeValue").textContent = `${event.target.value}%`);
     $("networkVolume").addEventListener("input", (event) => $("networkVolumeValue").textContent = `${event.target.value}%`);
     $("bluetoothVolume").addEventListener("input", (event) => $("bluetoothVolumeValue").textContent = `${event.target.value}%`);

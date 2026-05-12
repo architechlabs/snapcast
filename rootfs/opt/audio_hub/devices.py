@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import logging
+import re
 from pathlib import Path
 
 from process import run_checked
@@ -12,6 +13,8 @@ async def list_audio_devices() -> dict:
     cards = []
     capture = []
     playback = []
+    pcm_capture = []
+    dev_snd = list_dev_snd()
     arecord_raw = ""
     aplay_raw = ""
 
@@ -31,6 +34,11 @@ async def list_audio_devices() -> dict:
     if proc_cards.exists():
         cards = [line.rstrip() for line in proc_cards.read_text(errors="replace").splitlines() if line.strip()]
 
+    proc_pcm = Path("/proc/asound/pcm")
+    if proc_pcm.exists():
+        pcm_capture = parse_proc_pcm(proc_pcm.read_text(errors="replace"))
+        capture = merge_devices(capture, pcm_capture)
+
     rc, names = await run_checked(["arecord", "-L"], timeout=8)
     named_sources = [line.strip() for line in names.splitlines() if line and not line.startswith(" ")] if rc == 0 else []
 
@@ -39,17 +47,20 @@ async def list_audio_devices() -> dict:
         "/sys/firmware/devicetree/base/model",
     ])
     notes = device_notes(model, capture, playback)
+    permissions = permission_notes(dev_snd, capture)
 
     return {
         "cards": cards,
         "model": model,
+        "dev_snd": dev_snd,
         "capture": capture,
+        "pcm_capture": pcm_capture,
         "playback": playback,
         "named_capture_sources": named_sources,
         "selected_capture": select_capture_device(capture, named_sources),
         "has_capture": bool(capture),
         "input_capability": "capture_available" if capture else "no_capture_device",
-        "notes": notes,
+        "notes": notes + permissions,
         "recommended_hardware": recommended_hardware(capture),
         "raw": {
             "arecord_l": arecord_raw.strip(),
@@ -63,25 +74,74 @@ def parse_arecord_cards(output: str) -> list[dict]:
     for line in output.splitlines():
         if not line.startswith("card "):
             continue
-        left, _, desc = line.partition(":")
-        parts = left.replace("card ", "").split(",")
-        if len(parts) < 2:
+        match = re.match(r"card\s+(\d+):\s*([^,]+).*device\s+(\d+):\s*(.*)", line)
+        if not match:
             continue
-        card = parts[0].strip()
-        device = parts[1].replace("device", "").strip()
+        card, card_name, device, desc = match.groups()
         devices.append({
             "card": card,
+            "card_name": card_name.strip(),
             "device": device,
             "alsa": f"hw:{card},{device}",
+            "plughw": f"plughw:{card},{device}",
             "description": desc.strip(),
+            "source": "arecord",
         })
     return devices
 
 
+def parse_proc_pcm(output: str) -> list[dict]:
+    devices = []
+    for line in output.splitlines():
+        if "capture" not in line.lower():
+            continue
+        match = re.match(r"(\d+)-(\d+):\s*(.*?)\s*:\s*(.*?)\s*:\s*capture", line, re.IGNORECASE)
+        if not match:
+            continue
+        card, device, card_name, desc = match.groups()
+        devices.append({
+            "card": card,
+            "card_name": card_name.strip(),
+            "device": device,
+            "alsa": f"hw:{card},{device}",
+            "plughw": f"plughw:{card},{device}",
+            "description": desc.strip(),
+            "source": "proc_asound_pcm",
+        })
+    return devices
+
+
+def merge_devices(primary: list[dict], fallback: list[dict]) -> list[dict]:
+    merged = []
+    seen = set()
+    for device in primary + fallback:
+        key = (device.get("card"), device.get("device"))
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(device)
+    return merged
+
+
 def select_capture_device(capture: list[dict], named_sources: list[str]) -> str | None:
     if capture:
-        return capture[0]["alsa"]
+        return capture[0].get("plughw") or capture[0]["alsa"]
     return None
+
+
+def list_dev_snd() -> list[dict]:
+    root = Path("/dev/snd")
+    if not root.exists():
+        return []
+    entries = []
+    for item in sorted(root.iterdir()):
+        try:
+            stat = item.stat()
+            mode = oct(stat.st_mode & 0o777)
+        except OSError:
+            mode = "unknown"
+        entries.append({"name": item.name, "path": str(item), "mode": mode})
+    return entries
 
 
 def read_text_first(paths: list[str]) -> str:
@@ -100,7 +160,16 @@ def device_notes(model: str, capture: list[dict], playback: list[dict]) -> list[
     if playback and not capture:
         notes.append("Playback hardware is present, but Linux reports no capture-capable ALSA device.")
     if capture:
-        notes.append(f"Capture device detected: {capture[0]['alsa']} ({capture[0]['description']}).")
+        notes.append(f"Capture device detected: {capture[0].get('plughw') or capture[0]['alsa']} ({capture[0]['description']}).")
+    return notes
+
+
+def permission_notes(dev_snd: list[dict], capture: list[dict]) -> list[str]:
+    notes = []
+    if not dev_snd:
+        notes.append("The add-on cannot see /dev/snd. Rebuild with full hardware access enabled and restart Home Assistant Supervisor if needed.")
+    elif not any(entry["name"].startswith("pcmC") and "c" in entry["name"] for entry in dev_snd) and not capture:
+        notes.append("/dev/snd is visible, but no capture PCM node such as pcmC1D0c is exposed to the add-on.")
     return notes
 
 
