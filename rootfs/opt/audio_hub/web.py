@@ -7,9 +7,10 @@ from aiohttp import web
 StatusProvider = Callable[[], Awaitable[dict[str, Any]]]
 PatchHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 ActionHandler = Callable[[], Awaitable[dict[str, Any]]]
+ClipHandler = Callable[[], Awaitable[bytes]]
 
 
-def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler) -> web.Application:
+def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler) -> web.Application:
     app = web.Application()
     static_root = Path("/var/www/audio_hub")
 
@@ -32,9 +33,20 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     async def remove_entities(request):
         return web.json_response(await remove_entities_handler())
 
+    async def input_level(request):
+        return web.json_response(await input_level_handler())
+
+    async def monitor_clip(request):
+        clip = await monitor_clip_handler()
+        return web.Response(body=clip, content_type="audio/wav")
+
     app.router.add_get("/", index)
     app.router.add_get("/api/status", status)
     app.router.add_get("/{prefix:.+}/api/status", status)
+    app.router.add_get("/api/input-level", input_level)
+    app.router.add_get("/{prefix:.+}/api/input-level", input_level)
+    app.router.add_get("/api/monitor.wav", monitor_clip)
+    app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
     app.router.add_patch("/api/config", patch_config)
     app.router.add_patch("/{prefix:.+}/api/config", patch_config)
     app.router.add_post("/api/restart", restart)

@@ -236,6 +236,49 @@
       margin-top: 12px;
     }
 
+    .meter {
+      margin-top: 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .meter-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .meter-track {
+      height: 12px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #0b0f11;
+    }
+
+    .meter-fill {
+      width: 0%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width .16s ease;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+
+    audio {
+      width: 100%;
+      margin-top: 10px;
+    }
+
     @media (max-width: 860px) {
       .topbar { align-items: stretch; flex-direction: column; }
       .grid { grid-template-columns: 1fr; }
@@ -285,6 +328,16 @@
         <div class="row"><span>Wired USB/line input</span><button id="wiredToggle">On</button></div>
         <div class="row"><span>Network PCM bridge</span><button id="networkToggle">On</button></div>
         <div class="row"><span>Bluetooth receiver</span><button id="bluetoothToggle">Off</button></div>
+        <div class="meter">
+          <div class="meter-head"><span>Input signal</span><b id="meterText">waiting</b></div>
+          <div class="meter-track"><div id="meterFill" class="meter-fill"></div></div>
+          <div class="actions">
+            <button id="testInput" class="secondary">Test Input</button>
+            <button id="recordClip" class="secondary">Record Test Clip</button>
+            <button id="reloadDevices" class="secondary">Rescan Devices</button>
+          </div>
+          <audio id="monitorClip" controls></audio>
+        </div>
       </article>
 
       <article class="panel">
@@ -389,6 +442,7 @@
         tile("Active Source", health.active_source),
         tile("Wired Input", health.wired_input),
         tile("Input Detail", health.input_message),
+        tile("Capture Mode", health.capture_mode),
         tile("Network Input", health.network_input),
         tile("Bluetooth", health.bluetooth_input),
         tile("Entities", health.entities),
@@ -439,14 +493,49 @@
       }
     }
 
+    async function refreshLevel() {
+      try {
+        const level = await api("/api/input-level");
+        const percent = Math.min(100, Math.round((level.peak || level.level || 0) * 140));
+        $("meterFill").style.width = `${percent}%`;
+        $("meterText").textContent = level.ok ? `${Math.round((level.level || 0) * 100)}% ${level.state}` : level.state;
+      } catch (err) {
+        $("meterText").textContent = "unavailable";
+      }
+    }
+
+    function apiUrl(path) {
+      const candidates = apiCandidates(path);
+      return state.apiBase !== null ? `${state.apiBase}${path}` : candidates[0];
+    }
+
     async function patchConfig(payload) {
+      $("subtitle").textContent = "Applying changes";
       state.status = await api("/api/config", { method: "PATCH", body: JSON.stringify(payload) });
       render();
     }
 
     $("restart").addEventListener("click", async () => {
+      $("subtitle").textContent = "Restarting pipeline";
       await api("/api/restart", { method: "POST", body: "{}" });
       await refresh();
+    });
+    $("reloadDevices").addEventListener("click", async () => {
+      $("subtitle").textContent = "Scanning audio devices";
+      await api("/api/reload-devices", { method: "POST", body: "{}" });
+      await refresh();
+    });
+    $("testInput").addEventListener("click", async () => {
+      await refreshLevel();
+      await refresh();
+    });
+    $("recordClip").addEventListener("click", async () => {
+      $("meterText").textContent = "recording 3s";
+      const clip = $("monitorClip");
+      clip.src = `${apiUrl("/api/monitor.wav")}?t=${Date.now()}`;
+      clip.load();
+      setTimeout(() => clip.play().catch(() => {}), 3600);
+      await refreshLevel();
     });
     $("routingMode").addEventListener("change", (event) => patchConfig({ audio: { routing_mode: event.target.value } }));
     $("latency").addEventListener("input", (event) => $("latencyValue").textContent = `${event.target.value} ms`);
@@ -463,7 +552,9 @@
     $("bluetoothToggle").addEventListener("click", () => patchConfig({ wireless: { bluetooth_enabled: !state.status?.config?.wireless?.bluetooth_enabled } }));
 
     refresh();
+    refreshLevel();
     setInterval(refresh, 5000);
+    setInterval(refreshLevel, 1000);
   </script>
 </body>
 </html>

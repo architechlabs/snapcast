@@ -78,3 +78,22 @@ async def run_checked(command: Sequence[str], timeout: int = 10, env: dict[str, 
         await proc.wait()
         return 124, "timeout"
     return proc.returncode or 0, output.decode(errors="replace")
+
+
+async def run_binary(command: Sequence[str], timeout: int = 5, env: dict[str, str] | None = None, max_bytes: int = 262144) -> tuple[int, bytes, bytes]:
+    process_env = os.environ.copy()
+    if env:
+        process_env.update(env)
+    proc = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=process_env,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        proc.kill()
+        stdout, stderr = await proc.communicate()
+        return 124, stdout[:max_bytes], stderr[:max_bytes]
+    return proc.returncode or 0, stdout[:max_bytes], stderr[:max_bytes]

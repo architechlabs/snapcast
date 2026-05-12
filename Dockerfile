@@ -35,7 +35,8 @@ RUN sed -i -E 's/^#(.*\/community)$/\1/' /etc/apk/repositories \
         snapcast-server
 
 COPY rootfs/ /
-RUN chmod +x /usr/local/bin/audio-hub-run /usr/local/bin/audio-hub-device-event \
+RUN addgroup pulse audio 2>/dev/null || true \
+    && chmod +x /usr/local/bin/audio-hub-run /usr/local/bin/audio-hub-device-event \
     && chmod +x /opt/audio_hub/*.py
 
 EXPOSE 41704 41705 41780 41888 5555 5556/udp

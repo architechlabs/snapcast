@@ -69,7 +69,7 @@ class AudioHub:
             await asyncio.sleep(settle)
 
     async def start_web(self) -> None:
-        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.reload_devices, self.remove_entities)
+        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip)
         self.web_runner = web.AppRunner(app)
         await self.web_runner.setup()
         site = web.TCPSite(self.web_runner, "0.0.0.0", self.config["ui"]["port"])
@@ -105,14 +105,60 @@ class AudioHub:
             await self.restart_pipeline()
 
     async def patch_config(self, patch: dict[str, Any]) -> dict[str, Any]:
+        old_config = self.config
         self.config = save_runtime_patch(self.config, patch)
-        await self.restart_pipeline()
+        if self.requires_pipeline_restart(old_config, self.config, patch):
+            await self.restart_pipeline()
+        else:
+            self.pulse.config = self.config
+            await self.apply_live_patch(patch)
+            self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)
         return await self.status()
+
+    def requires_pipeline_restart(self, old_config: dict[str, Any], new_config: dict[str, Any], patch: dict[str, Any]) -> bool:
+        restart_keys = {
+            ("audio", "sample_rate"),
+            ("audio", "channels"),
+            ("audio", "format"),
+            ("audio", "latency_ms"),
+            ("audio", "routing_mode"),
+            ("wired", "enabled"),
+            ("wired", "device"),
+            ("wired", "profile"),
+            ("network", "enabled"),
+            ("network", "tcp_pcm_enabled"),
+            ("network", "tcp_pcm_port"),
+            ("network", "rtp_enabled"),
+            ("network", "rtp_port"),
+            ("wireless", "bluetooth_enabled"),
+            ("wireless", "bluetooth_pairable"),
+        }
+        for section, values in patch.items():
+            if not isinstance(values, dict):
+                return True
+            for key in values:
+                if (section, key) in restart_keys and old_config.get(section, {}).get(key) != new_config.get(section, {}).get(key):
+                    return True
+        return False
+
+    async def apply_live_patch(self, patch: dict[str, Any]) -> None:
+        if "wired" in patch and "volume" in patch["wired"]:
+            await self.pulse.set_volume("wired", self.config["wired"]["volume"])
+        if "network" in patch and "volume" in patch["network"]:
+            await self.pulse.set_volume("network", self.config["network"]["volume"])
+        if "wireless" in patch and "volume" in patch["wireless"]:
+            await self.pulse.set_volume("bluetooth", self.config["wireless"]["volume"])
 
     async def reload_devices(self) -> dict[str, Any]:
         self.devices = await list_audio_devices()
         self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)
         return {"ok": True, "devices": self.devices}
+
+    async def input_level(self) -> dict[str, Any]:
+        return await self.pulse.input_level()
+
+    async def monitor_clip(self) -> bytes:
+        return await self.pulse.monitor_clip(3.0)
 
     async def remove_entities(self) -> dict[str, Any]:
         return await self.entities.remove_discovery()

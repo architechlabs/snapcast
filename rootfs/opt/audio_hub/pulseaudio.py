@@ -2,9 +2,10 @@
 import asyncio
 import logging
 import os
+import struct
 from pathlib import Path
 
-from process import ManagedProcess, run_checked
+from process import ManagedProcess, run_binary, run_checked
 
 LOG = logging.getLogger("pulse")
 FIFO = Path("/tmp/audio-hub/snapcast.pcm")
@@ -26,6 +27,8 @@ class PulseAudioManager:
         self.processes: dict[str, ManagedProcess] = {}
         self.modules: list[str] = []
         self.wired_source_loaded = False
+        self.wired_device: str | None = None
+        self.wired_capture_mode = "none"
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -175,24 +178,81 @@ class PulseAudioManager:
             LOG.info("wired input is enabled, but no USB/ALSA capture device is present yet")
             return
         source_name = "wired_input"
-        try:
-            await self._pactl(
-                "load-module",
-                "module-alsa-source",
-                f"device={device}",
-                f"source_name={source_name}",
-                f"rate={self.config['audio']['sample_rate']}",
-                f"channels={self.config['audio']['channels']}",
-                f"source_properties=device.description=Wired_Input_{device}",
-            )
-        except RuntimeError as err:
-            LOG.warning("wired input %s could not be opened; continuing without wired source: %s", device, err)
+        if await self._try_pulse_alsa_source(device, source_name, latency):
+            self.wired_source_loaded = True
+            self.wired_device = device
+            self.wired_capture_mode = "pulseaudio_source"
             return
-        loopback_args = ["load-module", "module-loopback", f"source={source_name}", "sink=snap_hub_mix", f"latency_msec={latency}"]
-        if self.config["audio"]["routing_mode"] == "fallback_duck":
-            loopback_args.append("sink_input_properties=media.role=phone")
-        await self._pactl(*loopback_args)
+
+        await self._start_ffmpeg_alsa_bridge(device)
         self.wired_source_loaded = True
+        self.wired_device = device
+        self.wired_capture_mode = "ffmpeg_alsa_bridge"
+
+    async def _try_pulse_alsa_source(self, device: str, source_name: str, latency: int) -> bool:
+        rate = str(self.config["audio"]["sample_rate"])
+        attempts = [
+            [f"device={device}", f"source_name={source_name}", f"source_properties=device.description=Wired_Input_{device}"],
+            [f"device={device}", f"source_name={source_name}", f"rate={rate}", "channels=1", f"source_properties=device.description=Wired_Input_{device}"],
+            [f"device={device}", f"source_name={source_name}", "rate=44100", "channels=1", f"source_properties=device.description=Wired_Input_{device}"],
+        ]
+        if device.startswith("plughw:"):
+            hw_device = "hw:" + device.split(":", 1)[1]
+            attempts.append([f"device={hw_device}", f"source_name={source_name}", f"source_properties=device.description=Wired_Input_{hw_device}"])
+
+        last_error = None
+        for args in attempts:
+            try:
+                await self._pactl("load-module", "module-alsa-source", *args)
+                loopback_args = ["load-module", "module-loopback", f"source={source_name}", "sink=snap_hub_mix", f"latency_msec={latency}"]
+                if self.config["audio"]["routing_mode"] == "fallback_duck":
+                    loopback_args.append("sink_input_properties=media.role=phone")
+                await self._pactl(*loopback_args)
+                LOG.info("wired input attached through PulseAudio source using %s", " ".join(args))
+                return True
+            except RuntimeError as err:
+                last_error = err
+                await self._unload_source_if_exists(source_name)
+        LOG.warning("PulseAudio could not open wired input %s; falling back to FFmpeg ALSA bridge: %s", device, last_error)
+        return False
+
+    async def _unload_source_if_exists(self, source_name: str) -> None:
+        rc, out = await run_checked(["pactl", "list", "sources", "short"], timeout=5, env=PULSE_ENV)
+        if rc != 0:
+            return
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == source_name:
+                await run_checked(["pactl", "unload-module", parts[0]], timeout=5, env=PULSE_ENV)
+
+    async def _start_ffmpeg_alsa_bridge(self, device: str) -> None:
+        cfg = self.config
+        bridge = ManagedProcess(
+            "wired-alsa-bridge",
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "warning",
+                "-f",
+                "alsa",
+                "-thread_queue_size",
+                "1024",
+                "-i",
+                device,
+                "-ar",
+                str(cfg["audio"]["sample_rate"]),
+                "-ac",
+                str(cfg["audio"]["channels"]),
+                "-f",
+                "pulse",
+                "snap_hub_mix",
+            ],
+            env={**PULSE_ENV, "PULSE_PROP": "media.role=phone application.name=wired_alsa_bridge"},
+        )
+        self.processes["wired-alsa-bridge"] = bridge
+        await bridge.start()
+        LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
 
     async def _setup_network_sources(self) -> None:
         cfg = self.config
@@ -279,14 +339,31 @@ class PulseAudioManager:
     async def set_volume(self, target: str, volume: float) -> None:
         percent = f"{max(0, min(200, int(volume * 100)))}%"
         if target == "wired":
-            await run_checked(["pactl", "set-source-volume", "wired_input", percent], timeout=5, env=PULSE_ENV)
+            if self.wired_capture_mode == "pulseaudio_source":
+                await run_checked(["pactl", "set-source-volume", "wired_input", percent], timeout=5, env=PULSE_ENV)
+            elif self.wired_capture_mode == "ffmpeg_alsa_bridge":
+                await self._set_sink_input_volume(["wired_alsa_bridge"], percent)
         elif target in ("network", "bluetooth"):
-            rc, out = await run_checked(["pactl", "list", "sink-inputs", "short"], timeout=5, env=PULSE_ENV)
-            if rc == 0:
-                for line in out.splitlines():
-                    if target in line.lower() or "ffmpeg" in line.lower():
-                        sink_input = line.split()[0]
-                        await run_checked(["pactl", "set-sink-input-volume", sink_input, percent], timeout=5, env=PULSE_ENV)
+            names = ["tcp_pcm_bridge", "rtp_bridge"] if target == "network" else ["bluetooth"]
+            await self._set_sink_input_volume(names, percent)
+
+    async def _set_sink_input_volume(self, app_names: list[str], percent: str) -> None:
+        rc, out = await run_checked(["pactl", "list", "sink-inputs"], timeout=5, env=PULSE_ENV)
+        if rc != 0:
+            return
+        current = None
+        matched = False
+        for line in out.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Sink Input #"):
+                if current is not None and matched:
+                    await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
+                current = stripped.replace("Sink Input #", "").strip()
+                matched = False
+            elif "application.name" in stripped:
+                matched = any(name in stripped for name in app_names)
+        if current is not None and matched:
+            await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
 
     async def stop(self) -> None:
         for process in reversed(list(self.processes.values())):
@@ -294,6 +371,8 @@ class PulseAudioManager:
         self.processes.clear()
         self.modules.clear()
         self.wired_source_loaded = False
+        self.wired_device = None
+        self.wired_capture_mode = "none"
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -303,6 +382,62 @@ class PulseAudioManager:
         if pulse and pulse.running():
             return "partial"
         return "stopped"
+
+    async def input_level(self) -> dict:
+        if not self.wired_source_loaded or not self.wired_device:
+            return {"ok": False, "state": "no_wired_input", "level": 0, "peak": 0, "mode": self.wired_capture_mode}
+        if self.wired_capture_mode == "pulseaudio_source":
+            command = [
+                "parec",
+                "-d",
+                "wired_input",
+                "--raw",
+                "--format=s16le",
+                "--rate=16000",
+                "--channels=1",
+            ]
+            rc, raw, err = await run_binary(command, timeout=1, env=PULSE_ENV, max_bytes=64000)
+        else:
+            command = [
+                "parec",
+                "-d",
+                "snap_hub_mix.monitor",
+                "--raw",
+                "--format=s16le",
+                "--rate=16000",
+                "--channels=1",
+            ]
+            rc, raw, err = await run_binary(command, timeout=1, env=PULSE_ENV, max_bytes=64000)
+        if not raw:
+            return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": err.decode(errors="replace")[:400]}
+        level, peak = pcm16_level(raw)
+        return {"ok": rc in (0, 124), "state": "signal" if level > 0.015 else "quiet", "level": level, "peak": peak, "mode": self.wired_capture_mode}
+
+    async def monitor_clip(self, seconds: float = 3.0) -> bytes:
+        duration = max(1.0, min(10.0, seconds))
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "pulse",
+            "-i",
+            "snap_hub_mix.monitor",
+            "-t",
+            str(duration),
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            "-f",
+            "wav",
+            "-",
+        ]
+        rc, raw, err = await run_binary(command, timeout=int(duration) + 4, env=PULSE_ENV, max_bytes=2_000_000)
+        if rc not in (0, 124) or not raw:
+            raise RuntimeError(err.decode(errors="replace")[:400] or "failed to record monitor clip")
+        return raw
 
 
 def normalize_capture_device(device: str, devices: dict) -> str:
@@ -318,3 +453,17 @@ def normalize_capture_device(device: str, devices: dict) -> str:
         if device in values:
             return candidate.get("plughw") or candidate.get("alsa") or device
     return device
+
+
+def pcm16_level(raw: bytes) -> tuple[float, float]:
+    usable = len(raw) - (len(raw) % 2)
+    if usable <= 0:
+        return 0.0, 0.0
+    count = usable // 2
+    samples = struct.unpack("<" + "h" * count, raw[:usable])
+    if not samples:
+        return 0.0, 0.0
+    squares = sum(sample * sample for sample in samples)
+    peak = max(abs(sample) for sample in samples) / 32768.0
+    rms = (squares / len(samples)) ** 0.5 / 32768.0
+    return round(rms, 4), round(peak, 4)
