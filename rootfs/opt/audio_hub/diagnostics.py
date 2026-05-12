@@ -25,7 +25,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "snapcast": snap_status,
         "pulse": pulse_status if pulse_rc == 0 else "unavailable",
         "active_source": active_source,
-        "wired_input": "available" if devices.get("selected_capture") else devices.get("input_capability", "missing"),
+        "wired_input": wired_input_state(devices, pulse),
         "input_message": input_message(devices),
         "capture_mode": getattr(pulse, "wired_capture_mode", "none") if pulse else "none",
         "capture_error": getattr(pulse, "wired_error", "") if pulse else "",
@@ -65,3 +65,13 @@ def input_message(devices: dict) -> str:
     if devices.get("selected_capture"):
         return f"Using {devices['selected_capture']}"
     return "No capture input detected."
+
+
+def wired_input_state(devices: dict, pulse) -> str:
+    if not devices.get("selected_capture"):
+        return devices.get("input_capability", "missing")
+    if getattr(pulse, "wired_source_loaded", False):
+        return "attached"
+    if getattr(pulse, "wired_busy", False):
+        return "device_busy"
+    return "detected_not_attached"

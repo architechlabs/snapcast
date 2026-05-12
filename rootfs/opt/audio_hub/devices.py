@@ -41,6 +41,7 @@ async def list_audio_devices() -> dict:
 
     rc, names = await run_checked(["arecord", "-L"], timeout=8)
     named_sources = [line.strip() for line in names.splitlines() if line and not line.startswith(" ")] if rc == 0 else []
+    capture = annotate_capture_candidates(capture, named_sources)
 
     model = read_text_first([
         "/proc/device-tree/model",
@@ -127,6 +128,43 @@ def select_capture_device(capture: list[dict], named_sources: list[str]) -> str 
     if capture:
         return capture[0].get("plughw") or capture[0]["alsa"]
     return None
+
+
+def annotate_capture_candidates(capture: list[dict], named_sources: list[str]) -> list[dict]:
+    annotated = []
+    for device in capture:
+        enriched = dict(device)
+        enriched["candidates"] = capture_candidates_for_device(enriched, named_sources)
+        annotated.append(enriched)
+    return annotated
+
+
+def capture_candidates_for_device(device: dict, named_sources: list[str]) -> list[str]:
+    card = str(device.get("card", "")).strip()
+    dev = str(device.get("device", "0")).strip()
+    card_name = str(device.get("card_name", "")).strip()
+    candidates = [
+        device.get("plughw"),
+        f"plughw:{card},{dev}" if card else None,
+        f"dsnoop:CARD={card_name},DEV={dev}" if card_name else None,
+        f"default:CARD={card_name}" if card_name else None,
+        f"sysdefault:CARD={card_name}" if card_name else None,
+        device.get("alsa"),
+        f"hw:{card},{dev}" if card else None,
+    ]
+
+    if card_name:
+        for source in named_sources:
+            if card_name in source and source not in candidates:
+                candidates.append(source)
+    seen = set()
+    result = []
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        result.append(candidate)
+    return result
 
 
 def list_dev_snd() -> list[dict]:

@@ -30,6 +30,8 @@ class PulseAudioManager:
         self.wired_device: str | None = None
         self.wired_capture_mode = "none"
         self.wired_error = ""
+        self.wired_busy = False
+        self.wired_attempted_devices: list[str] = []
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -170,6 +172,12 @@ class PulseAudioManager:
         return wired, network, bluetooth
 
     async def _setup_wired_source(self, devices: dict, latency: int) -> None:
+        self.wired_source_loaded = False
+        self.wired_device = None
+        self.wired_capture_mode = "none"
+        self.wired_error = ""
+        self.wired_busy = False
+        self.wired_attempted_devices = []
         device = self.config["wired"]["device"]
         if device == "auto":
             device = devices.get("selected_capture")
@@ -179,20 +187,68 @@ class PulseAudioManager:
             LOG.info("wired input is enabled, but no USB/ALSA capture device is present yet")
             return
         source_name = "wired_input"
-        if await self._start_ffmpeg_alsa_bridge(device):
-            self.wired_source_loaded = True
-            self.wired_device = device
-            self.wired_capture_mode = "ffmpeg_alsa_bridge"
+        candidates = capture_device_candidates(device, devices)
+        self.wired_attempted_devices = candidates
+        errors = []
+
+        for candidate in candidates:
+            if await self._start_ffmpeg_alsa_bridge(candidate):
+                self.wired_source_loaded = True
+                self.wired_device = candidate
+                self.wired_capture_mode = "ffmpeg_alsa_bridge"
+                self.wired_busy = False
+                return
+            if self.wired_error:
+                errors.append(f"{candidate}: {self.wired_error}")
+
+        busy_only = bool(errors) and all(is_busy_error(error) for error in errors)
+        if busy_only:
+            self.wired_busy = True
+            self.wired_capture_mode = "busy"
+            self.wired_error = concise_error(
+                "Capture device is busy. Another service is holding the microphone, so the add-on cannot open it yet.",
+                errors,
+            )
+            LOG.warning("%s", self.wired_error)
             return
 
-        if await self._try_pulse_alsa_source(device, source_name, latency):
-            self.wired_source_loaded = True
-            self.wired_device = device
-            self.wired_capture_mode = "pulseaudio_source"
-            self.wired_error = ""
-            return
+        for candidate in candidates[:3]:
+            if await self._try_pulse_alsa_source(candidate, source_name, latency):
+                self.wired_source_loaded = True
+                self.wired_device = candidate
+                self.wired_capture_mode = "pulseaudio_source"
+                self.wired_error = ""
+                self.wired_busy = False
+                return
 
+        self.wired_busy = any(is_busy_error(error) for error in errors)
+        if errors:
+            self.wired_error = concise_error("Wired input could not be attached.", errors)
         LOG.warning("wired input %s could not be attached by FFmpeg or PulseAudio", device)
+
+    async def retry_wired_input(self, devices: dict) -> bool:
+        if not self.config["wired"]["enabled"]:
+            return False
+        bridge = self.processes.get("wired-alsa-bridge")
+        if self.wired_source_loaded and self.wired_capture_mode == "ffmpeg_alsa_bridge" and bridge and bridge.running():
+            return True
+        if self.wired_source_loaded and self.wired_capture_mode == "pulseaudio_source":
+            return True
+        await self._stop_wired_capture()
+        await self._setup_wired_source(devices, self.config["audio"]["latency_ms"])
+        await self._apply_volumes()
+        return self.wired_source_loaded
+
+    async def _stop_wired_capture(self) -> None:
+        bridge = self.processes.pop("wired-alsa-bridge", None)
+        if bridge:
+            await bridge.stop()
+        await self._unload_source_if_exists("wired_input")
+        self.wired_source_loaded = False
+        self.wired_device = None
+        self.wired_capture_mode = "none"
+        self.wired_error = ""
+        self.wired_busy = False
 
     async def _try_pulse_alsa_source(self, device: str, source_name: str, latency: int) -> bool:
         rate = str(self.config["audio"]["sample_rate"])
@@ -261,10 +317,30 @@ class PulseAudioManager:
         if not bridge.running():
             self.wired_error = "\n".join(bridge.last_output[-6:]) or "FFmpeg ALSA bridge exited immediately"
             LOG.warning("FFmpeg ALSA bridge failed for %s: %s", device, self.wired_error)
+            busy = await self._busy_diagnostics(device)
+            if busy:
+                self.wired_error = f"{self.wired_error}\n{busy}"
             return False
         self.wired_error = ""
         LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
         return True
+
+    async def _busy_diagnostics(self, device: str) -> str:
+        match = parse_hw_device(device)
+        if not match:
+            return ""
+        card, pcm = match
+        node = f"/dev/snd/pcmC{card}D{pcm}c"
+        if not Path(node).exists():
+            return ""
+        diagnostics = []
+        rc, out = await run_checked(["fuser", "-v", node], timeout=3)
+        if rc == 0 and out.strip():
+            diagnostics.append(f"Busy holder from fuser for {node}: {out.strip()}")
+        rc, out = await run_checked(["lsof", node], timeout=3)
+        if rc == 0 and out.strip():
+            diagnostics.append(f"Open file holder from lsof for {node}: {out.strip()}")
+        return "\n".join(diagnostics)
 
     async def _setup_network_sources(self) -> None:
         cfg = self.config
@@ -386,6 +462,8 @@ class PulseAudioManager:
         self.wired_device = None
         self.wired_capture_mode = "none"
         self.wired_error = ""
+        self.wired_busy = False
+        self.wired_attempted_devices = []
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -398,7 +476,8 @@ class PulseAudioManager:
 
     async def input_level(self) -> dict:
         if not self.wired_source_loaded or not self.wired_device:
-            return {"ok": False, "state": "no_wired_input", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": self.wired_error}
+            state = "capture_busy" if self.wired_busy else "no_wired_input"
+            return {"ok": False, "state": state, "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": self.wired_error, "attempted": self.wired_attempted_devices}
         bridge = self.processes.get("wired-alsa-bridge")
         if self.wired_capture_mode == "ffmpeg_alsa_bridge" and bridge and not bridge.running():
             self.wired_source_loaded = False
@@ -482,6 +561,57 @@ def normalize_capture_device(device: str, devices: dict) -> str:
         if device in values:
             return candidate.get("plughw") or candidate.get("alsa") or device
     return device
+
+
+def capture_device_candidates(device: str, devices: dict) -> list[str]:
+    selected = normalize_capture_device(device, devices)
+    candidates = [selected]
+    for capture in devices.get("capture", []):
+        values = {
+            capture.get("alsa"),
+            capture.get("plughw"),
+            f"hw:{capture.get('card')},{capture.get('device')}",
+            f"plughw:{capture.get('card')},{capture.get('device')}",
+        }
+        if selected in values or device in values:
+            candidates.extend(capture.get("candidates", []))
+            break
+    return dedupe([candidate for candidate in candidates if candidate])
+
+
+def dedupe(values: list[str]) -> list[str]:
+    seen = set()
+    result = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def parse_hw_device(device: str) -> tuple[str, str] | None:
+    if device.startswith(("hw:", "plughw:")):
+        parts = device.split(":", 1)[1].split(",", 1)
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            return parts[0], parts[1]
+    return None
+
+
+def is_busy_error(error: str) -> bool:
+    lower = error.lower()
+    return "resource busy" in lower or "device or resource busy" in lower or "busy holder" in lower
+
+
+def concise_error(prefix: str, errors: list[str]) -> str:
+    important = []
+    for error in errors:
+        short = " ".join(error.split())
+        if short and short not in important:
+            important.append(short)
+        if len(important) >= 4:
+            break
+    return f"{prefix} Tried: {' | '.join(important)}"
 
 
 def pcm16_level(raw: bytes) -> tuple[float, float]:

@@ -10,7 +10,7 @@ ActionHandler = Callable[[], Awaitable[dict[str, Any]]]
 ClipHandler = Callable[[], Awaitable[bytes]]
 
 
-def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler) -> web.Application:
+def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, retry_wired_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler) -> web.Application:
     app = web.Application()
     static_root = Path("/var/www/audio_hub")
 
@@ -26,6 +26,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
 
     async def restart(request):
         return web.json_response(await restart_handler())
+
+    async def retry_wired(request):
+        return web.json_response(await retry_wired_handler())
 
     async def reload_devices(request):
         return web.json_response(await reload_devices_handler())
@@ -51,6 +54,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_patch("/{prefix:.+}/api/config", patch_config)
     app.router.add_post("/api/restart", restart)
     app.router.add_post("/{prefix:.+}/api/restart", restart)
+    app.router.add_post("/api/retry-wired", retry_wired)
+    app.router.add_post("/{prefix:.+}/api/retry-wired", retry_wired)
     app.router.add_post("/api/reload-devices", reload_devices)
     app.router.add_post("/{prefix:.+}/api/reload-devices", reload_devices)
     app.router.add_post("/api/entities/remove", remove_entities)

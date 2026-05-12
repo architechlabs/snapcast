@@ -22,7 +22,9 @@ RUN sed -i -E 's/^#(.*\/community)$/\1/' /etc/apk/repositories \
         ffmpeg \
         iproute2 \
         jq \
+        lsof \
         netcat-openbsd \
+        psmisc \
         procps \
         pulseaudio \
         pulseaudio-alsa \

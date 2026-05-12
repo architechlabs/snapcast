@@ -71,7 +71,7 @@ class AudioHub:
             await asyncio.sleep(settle)
 
     async def start_web(self) -> None:
-        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip)
+        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.retry_wired_input, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip)
         logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
         self.web_runner = web.AppRunner(app, access_log=None)
         await self.web_runner.setup()
@@ -106,10 +106,11 @@ class AudioHub:
         bridge = self.pulse.processes.get("wired-alsa-bridge")
         bridge_stopped = self.pulse.wired_capture_mode == "ffmpeg_alsa_bridge" and bridge and not bridge.running()
         needs_capture_retry = self.config["wired"]["enabled"] and current_devices.get("selected_capture") and (not self.pulse.wired_source_loaded or bridge_stopped)
-        if needs_capture_retry and time.monotonic() - self.last_capture_retry > 45:
+        retry_interval = 120 if self.pulse.wired_busy else 45
+        if needs_capture_retry and time.monotonic() - self.last_capture_retry > retry_interval:
             self.last_capture_retry = time.monotonic()
-            LOG.info("capture device is present but not attached; retrying wired input pipeline")
-            await self.restart_pipeline()
+            LOG.info("capture device is present but not attached; retrying wired input without restarting Snapcast")
+            await self.retry_wired_input()
 
     async def patch_config(self, patch: dict[str, Any]) -> dict[str, Any]:
         old_config = self.config
@@ -160,6 +161,13 @@ class AudioHub:
         self.devices = await list_audio_devices()
         self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)
         return {"ok": True, "devices": self.devices}
+
+    async def retry_wired_input(self) -> dict[str, Any]:
+        async with self.restart_lock:
+            self.devices = await list_audio_devices()
+            attached = await self.pulse.retry_wired_input(self.devices)
+            self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)
+        return {"ok": attached, "attached": attached, "devices": self.devices, "error": self.pulse.wired_error}
 
     async def input_level(self) -> dict[str, Any]:
         return await self.pulse.input_level()

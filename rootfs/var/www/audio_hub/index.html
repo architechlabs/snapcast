@@ -334,6 +334,7 @@
           <div class="actions">
             <button id="testInput" class="secondary">Test Input</button>
             <button id="recordClip" class="secondary">Record Test Clip</button>
+            <button id="retryMic" class="secondary">Retry Mic</button>
             <button id="reloadDevices" class="secondary">Rescan Devices</button>
           </div>
           <audio id="monitorClip" controls></audio>
@@ -443,6 +444,7 @@
         tile("Wired Input", health.wired_input),
         tile("Input Detail", health.input_message),
         tile("Capture Mode", health.capture_mode),
+        tile("Capture Error", health.capture_error || "none"),
         tile("Network Input", health.network_input),
         tile("Bluetooth", health.bluetooth_input),
         tile("Entities", health.entities),
@@ -450,7 +452,8 @@
 
       const notes = data.devices?.notes || [];
       const recommendations = data.devices?.recommended_hardware || [];
-      const advisoryText = [...notes, ...recommendations].join(" ");
+      const captureError = data.health?.capture_error ? [`Capture issue: ${data.health.capture_error}`] : [];
+      const advisoryText = [...captureError, ...notes, ...recommendations].join(" ");
       $("advisory").textContent = advisoryText;
       $("advisory").classList.toggle("show", Boolean(advisoryText));
 
@@ -498,7 +501,8 @@
         const level = await api("/api/input-level");
         const percent = Math.min(100, Math.round((level.peak || level.level || 0) * 140));
         $("meterFill").style.width = `${percent}%`;
-        $("meterText").textContent = level.ok ? `${Math.round((level.level || 0) * 100)}% ${level.state}` : `${level.state}${level.error ? " - " + level.error.slice(0, 90) : ""}`;
+        const err = level.error ? ` - ${level.error.slice(0, 120)}` : "";
+        $("meterText").textContent = level.ok ? `${Math.round((level.level || 0) * 100)}% ${level.state}` : `${level.state}${err}`;
       } catch (err) {
         $("meterText").textContent = "unavailable";
       }
@@ -524,6 +528,12 @@
       $("subtitle").textContent = "Scanning audio devices";
       await api("/api/reload-devices", { method: "POST", body: "{}" });
       await refresh();
+    });
+    $("retryMic").addEventListener("click", async () => {
+      $("subtitle").textContent = "Retrying microphone";
+      await api("/api/retry-wired", { method: "POST", body: "{}" });
+      await refresh();
+      await refreshLevel();
     });
     $("testInput").addEventListener("click", async () => {
       await refreshLevel();
