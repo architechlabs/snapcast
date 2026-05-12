@@ -58,6 +58,12 @@ class SnapcastManager:
             "(Avahi) Failed to create client",
             "(AsioStream) No data since",
             "(Server) onResync",
+            "(ControlServer) New connection from:",
+            "(ControlServer) Removing",
+            "(ControlSessionHTTP) ControlSessionHttp::on_read error: bad method",
+            "(StreamServer) StreamServer::NewConnection:",
+            "(StreamSessionTCP) unknown message type received:",
+            "(StreamServer) onDisconnect:",
         ]
         self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH), "--server.mdns=false"], quiet_substrings=quiet)
         await self.process.start()
