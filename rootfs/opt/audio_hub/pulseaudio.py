@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import shlex
 import struct
 from pathlib import Path
 
@@ -18,6 +19,15 @@ PULSE_ENV = {
     "PULSE_STATE_PATH": "/data/pulse",
     "PULSE_COOKIE": "/data/pulse/cookie",
     "DBUS_SYSTEM_BUS_ADDRESS": "unix:path=/run/dbus/system_bus_socket",
+}
+HOST_PULSE_ENV = {
+    key: value
+    for key, value in {
+        "PULSE_SERVER": os.environ.get("AUDIO_HUB_HOST_PULSE_SERVER", ""),
+        "PULSE_COOKIE": os.environ.get("AUDIO_HUB_HOST_PULSE_COOKIE", ""),
+        "PULSE_RUNTIME_PATH": os.environ.get("AUDIO_HUB_HOST_PULSE_RUNTIME_PATH", ""),
+    }.items()
+    if value
 }
 
 
@@ -191,6 +201,13 @@ class PulseAudioManager:
         self.wired_attempted_devices = candidates
         errors = []
 
+        if await self._start_host_pulse_bridge(devices):
+            self.wired_source_loaded = True
+            self.wired_device = "haos_pulse_source"
+            self.wired_capture_mode = "haos_pulse_bridge"
+            self.wired_busy = False
+            return
+
         for candidate in candidates:
             if await self._start_ffmpeg_alsa_bridge(candidate):
                 self.wired_source_loaded = True
@@ -201,13 +218,13 @@ class PulseAudioManager:
             if self.wired_error:
                 errors.append(f"{candidate}: {self.wired_error}")
 
-        busy_only = bool(errors) and all(is_busy_error(error) for error in errors)
-        if busy_only:
+        busy_errors = [error for error in errors if is_busy_error(error)]
+        if busy_errors:
             self.wired_busy = True
             self.wired_capture_mode = "busy"
             self.wired_error = concise_error(
                 "Capture device is busy. Another service is holding the microphone, so the add-on cannot open it yet.",
-                errors,
+                busy_errors,
             )
             LOG.warning("%s", self.wired_error)
             return
@@ -243,6 +260,9 @@ class PulseAudioManager:
         bridge = self.processes.pop("wired-alsa-bridge", None)
         if bridge:
             await bridge.stop()
+        host_bridge = self.processes.pop("host-pulse-capture-bridge", None)
+        if host_bridge:
+            await host_bridge.stop()
         await self._unload_source_if_exists("wired_input")
         self.wired_source_loaded = False
         self.wired_device = None
@@ -324,6 +344,52 @@ class PulseAudioManager:
         self.wired_error = ""
         LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
         return True
+
+    async def _start_host_pulse_bridge(self, devices: dict) -> bool:
+        source = await self._select_host_pulse_source(devices)
+        if not source:
+            return False
+        cfg = self.config
+        bridge = ManagedProcess(
+            "host-pulse-capture-bridge",
+            ["bash", "-lc", host_pulse_bridge_command(source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"])],
+            env={**HOST_PULSE_ENV, **PULSE_ENV},
+            quiet_substrings=["Failed to create secure directory"],
+        )
+        self.processes["host-pulse-capture-bridge"] = bridge
+        await bridge.start()
+        await asyncio.sleep(0.8)
+        if not bridge.running():
+            self.wired_error = "\n".join(bridge.last_output[-6:]) or "HAOS PulseAudio capture bridge exited immediately"
+            LOG.warning("HAOS PulseAudio capture bridge failed for %s: %s", source, self.wired_error)
+            return False
+        self.wired_error = ""
+        LOG.info("wired input attached through HAOS PulseAudio source %s", source)
+        return True
+
+    async def _select_host_pulse_source(self, devices: dict) -> str | None:
+        if not host_pulse_enabled():
+            return None
+        rc, out = await run_checked(["pactl", "list", "sources", "short"], timeout=4, env=HOST_PULSE_ENV)
+        if rc != 0:
+            return None
+        sources = []
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            name = parts[1]
+            if ".monitor" in name or name.endswith(".monitor"):
+                continue
+            sources.append(name)
+        if not sources:
+            return None
+        tokens = host_pulse_match_tokens(devices)
+        for source in sources:
+            lowered = source.lower()
+            if any(token and token in lowered for token in tokens):
+                return source
+        return sources[0] if len(sources) == 1 else None
 
     async def _busy_diagnostics(self, device: str) -> str:
         match = parse_hw_device(device)
@@ -429,8 +495,8 @@ class PulseAudioManager:
         if target == "wired":
             if self.wired_capture_mode == "pulseaudio_source":
                 await run_checked(["pactl", "set-source-volume", "wired_input", percent], timeout=5, env=PULSE_ENV)
-            elif self.wired_capture_mode == "ffmpeg_alsa_bridge":
-                await self._set_sink_input_volume(["wired_alsa_bridge"], percent)
+            elif self.wired_capture_mode in ("ffmpeg_alsa_bridge", "haos_pulse_bridge"):
+                await self._set_sink_input_volume(["wired_alsa_bridge", "host_pulse_bridge"], percent)
         elif target in ("network", "bluetooth"):
             names = ["tcp_pcm_bridge", "rtp_bridge"] if target == "network" else ["bluetooth"]
             await self._set_sink_input_volume(names, percent)
@@ -603,13 +669,49 @@ def is_busy_error(error: str) -> bool:
     return "resource busy" in lower or "device or resource busy" in lower or "busy holder" in lower
 
 
+def host_pulse_enabled() -> bool:
+    server = HOST_PULSE_ENV.get("PULSE_SERVER", "")
+    return bool(server and server != PULSE_ENV["PULSE_SERVER"] and str(PULSE_SOCKET) not in server)
+
+
+def host_pulse_match_tokens(devices: dict) -> list[str]:
+    tokens = []
+    for capture in devices.get("capture", []):
+        for key in ("card_id", "card_name", "description"):
+            value = str(capture.get(key, "")).lower()
+            for token in value.replace("[", " ").replace("]", " ").replace("_", " ").split():
+                if len(token) >= 3 and token not in tokens:
+                    tokens.append(token)
+    tokens.extend(["usb", "input", "microphone", "mic"])
+    return tokens
+
+
+def host_pulse_bridge_command(source: str, rate: int, channels: int, audio_format: str) -> str:
+    host_server = shlex.quote(HOST_PULSE_ENV.get("PULSE_SERVER", ""))
+    host_cookie = shlex.quote(HOST_PULSE_ENV.get("PULSE_COOKIE", ""))
+    host_runtime = shlex.quote(HOST_PULSE_ENV.get("PULSE_RUNTIME_PATH", ""))
+    local_server = shlex.quote(PULSE_ENV["PULSE_SERVER"])
+    source_arg = shlex.quote(source)
+    cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else ""
+    runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else ""
+    return (
+        f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
+        f"parec -d {source_arg} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
+        f"| PULSE_SERVER={local_server} PULSE_PROP=application.name=host_pulse_bridge "
+        f"pacat --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} -d snap_hub_mix"
+    )
+
+
 def concise_error(prefix: str, errors: list[str]) -> str:
     important = []
     for error in errors:
         short = " ".join(error.split())
+        short = short.replace("Error opening input files: I/O error", "").strip()
+        if len(short) > 280:
+            short = short[:277].rstrip() + "..."
         if short and short not in important:
             important.append(short)
-        if len(important) >= 4:
+        if len(important) >= 3:
             break
     return f"{prefix} Tried: {' | '.join(important)}"
 
