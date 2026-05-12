@@ -28,6 +28,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "wired_input": "available" if devices.get("selected_capture") else devices.get("input_capability", "missing"),
         "input_message": input_message(devices),
         "capture_mode": getattr(pulse, "wired_capture_mode", "none") if pulse else "none",
+        "capture_error": getattr(pulse, "wired_error", "") if pulse else "",
         "network_input": "enabled" if config["network"]["enabled"] else "disabled",
         "bluetooth_input": "enabled" if config["wireless"]["bluetooth_enabled"] else "disabled",
         "entities": entities.health() if entities else "disabled",

@@ -29,6 +29,7 @@ class PulseAudioManager:
         self.wired_source_loaded = False
         self.wired_device: str | None = None
         self.wired_capture_mode = "none"
+        self.wired_error = ""
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -178,16 +179,20 @@ class PulseAudioManager:
             LOG.info("wired input is enabled, but no USB/ALSA capture device is present yet")
             return
         source_name = "wired_input"
+        if await self._start_ffmpeg_alsa_bridge(device):
+            self.wired_source_loaded = True
+            self.wired_device = device
+            self.wired_capture_mode = "ffmpeg_alsa_bridge"
+            return
+
         if await self._try_pulse_alsa_source(device, source_name, latency):
             self.wired_source_loaded = True
             self.wired_device = device
             self.wired_capture_mode = "pulseaudio_source"
+            self.wired_error = ""
             return
 
-        await self._start_ffmpeg_alsa_bridge(device)
-        self.wired_source_loaded = True
-        self.wired_device = device
-        self.wired_capture_mode = "ffmpeg_alsa_bridge"
+        LOG.warning("wired input %s could not be attached by FFmpeg or PulseAudio", device)
 
     async def _try_pulse_alsa_source(self, device: str, source_name: str, latency: int) -> bool:
         rate = str(self.config["audio"]["sample_rate"])
@@ -225,7 +230,7 @@ class PulseAudioManager:
             if len(parts) >= 2 and parts[1] == source_name:
                 await run_checked(["pactl", "unload-module", parts[0]], timeout=5, env=PULSE_ENV)
 
-    async def _start_ffmpeg_alsa_bridge(self, device: str) -> None:
+    async def _start_ffmpeg_alsa_bridge(self, device: str) -> bool:
         cfg = self.config
         bridge = ManagedProcess(
             "wired-alsa-bridge",
@@ -252,7 +257,14 @@ class PulseAudioManager:
         )
         self.processes["wired-alsa-bridge"] = bridge
         await bridge.start()
+        await asyncio.sleep(0.8)
+        if not bridge.running():
+            self.wired_error = "\n".join(bridge.last_output[-6:]) or "FFmpeg ALSA bridge exited immediately"
+            LOG.warning("FFmpeg ALSA bridge failed for %s: %s", device, self.wired_error)
+            return False
+        self.wired_error = ""
         LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
+        return True
 
     async def _setup_network_sources(self) -> None:
         cfg = self.config
@@ -373,6 +385,7 @@ class PulseAudioManager:
         self.wired_source_loaded = False
         self.wired_device = None
         self.wired_capture_mode = "none"
+        self.wired_error = ""
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -385,7 +398,12 @@ class PulseAudioManager:
 
     async def input_level(self) -> dict:
         if not self.wired_source_loaded or not self.wired_device:
-            return {"ok": False, "state": "no_wired_input", "level": 0, "peak": 0, "mode": self.wired_capture_mode}
+            return {"ok": False, "state": "no_wired_input", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": self.wired_error}
+        bridge = self.processes.get("wired-alsa-bridge")
+        if self.wired_capture_mode == "ffmpeg_alsa_bridge" and bridge and not bridge.running():
+            self.wired_source_loaded = False
+            self.wired_error = "\n".join(bridge.last_output[-6:]) or "FFmpeg ALSA bridge is not running"
+            return {"ok": False, "state": "capture_bridge_stopped", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": self.wired_error}
         if self.wired_capture_mode == "pulseaudio_source":
             command = [
                 "parec",
@@ -399,17 +417,28 @@ class PulseAudioManager:
             rc, raw, err = await run_binary(command, timeout=1, env=PULSE_ENV, max_bytes=64000)
         else:
             command = [
-                "parec",
-                "-d",
+                "ffmpeg",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "pulse",
+                "-i",
                 "snap_hub_mix.monitor",
-                "--raw",
-                "--format=s16le",
-                "--rate=16000",
-                "--channels=1",
+                "-t",
+                "0.6",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-f",
+                "s16le",
+                "-",
             ]
-            rc, raw, err = await run_binary(command, timeout=1, env=PULSE_ENV, max_bytes=64000)
+            rc, raw, err = await run_binary(command, timeout=3, env=PULSE_ENV, max_bytes=64000)
         if not raw:
-            return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": err.decode(errors="replace")[:400]}
+            error = err.decode(errors="replace")[:400] or self.wired_error or "no PCM bytes received from mixer monitor"
+            return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": error}
         level, peak = pcm16_level(raw)
         return {"ok": rc in (0, 124), "state": "signal" if level > 0.015 else "quiet", "level": level, "peak": peak, "mode": self.wired_capture_mode}
 

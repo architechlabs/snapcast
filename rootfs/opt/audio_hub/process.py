@@ -16,6 +16,7 @@ class ManagedProcess:
         self.quiet_substrings = list(quiet_substrings or [])
         self.proc: asyncio.subprocess.Process | None = None
         self.started = False
+        self.last_output: list[str] = []
 
     async def start(self) -> None:
         await self.stop()
@@ -41,6 +42,8 @@ class ManagedProcess:
             text = line.decode(errors="replace").rstrip()
             if any(marker in text for marker in self.quiet_substrings):
                 continue
+            self.last_output.append(text)
+            self.last_output = self.last_output[-20:]
             LOG.info("[%s] %s", self.name, text)
 
     async def stop(self) -> None:

@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import signal
+import time
 from typing import Any
 
 from aiohttp import web
@@ -30,6 +31,7 @@ class AudioHub:
         self.status_cache: dict[str, Any] = {}
         self.restart_lock = asyncio.Lock()
         self.stopping = asyncio.Event()
+        self.last_capture_retry = 0.0
 
     async def run(self) -> None:
         await self.start_pipeline()
@@ -70,7 +72,8 @@ class AudioHub:
 
     async def start_web(self) -> None:
         app = create_app(self.status, self.patch_config, self.restart_pipeline, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip)
-        self.web_runner = web.AppRunner(app)
+        logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+        self.web_runner = web.AppRunner(app, access_log=None)
         await self.web_runner.setup()
         site = web.TCPSite(self.web_runner, "0.0.0.0", self.config["ui"]["port"])
         await site.start()
@@ -100,8 +103,12 @@ class AudioHub:
             await self.restart_pipeline()
             return
         current_devices = self.status_cache.get("devices", {}) if self.status_cache else {}
-        if self.config["wired"]["enabled"] and current_devices.get("selected_capture") and not self.pulse.wired_source_loaded:
-            LOG.info("capture device appeared after startup; restarting pipeline to attach wired input")
+        bridge = self.pulse.processes.get("wired-alsa-bridge")
+        bridge_stopped = self.pulse.wired_capture_mode == "ffmpeg_alsa_bridge" and bridge and not bridge.running()
+        needs_capture_retry = self.config["wired"]["enabled"] and current_devices.get("selected_capture") and (not self.pulse.wired_source_loaded or bridge_stopped)
+        if needs_capture_retry and time.monotonic() - self.last_capture_retry > 45:
+            self.last_capture_retry = time.monotonic()
+            LOG.info("capture device is present but not attached; retrying wired input pipeline")
             await self.restart_pipeline()
 
     async def patch_config(self, patch: dict[str, Any]) -> dict[str, Any]:

@@ -498,7 +498,7 @@
         const level = await api("/api/input-level");
         const percent = Math.min(100, Math.round((level.peak || level.level || 0) * 140));
         $("meterFill").style.width = `${percent}%`;
-        $("meterText").textContent = level.ok ? `${Math.round((level.level || 0) * 100)}% ${level.state}` : level.state;
+        $("meterText").textContent = level.ok ? `${Math.round((level.level || 0) * 100)}% ${level.state}` : `${level.state}${level.error ? " - " + level.error.slice(0, 90) : ""}`;
       } catch (err) {
         $("meterText").textContent = "unavailable";
       }
