@@ -18,6 +18,8 @@ class SnapcastManager:
         self.tap_process: ManagedProcess | None = None
         self.tap_loopback_module: str | None = None
         self.bridge_lock = asyncio.Lock()
+        self.tap_retry_after = 0.0
+        self.tap_error = ""
         self.bridge_status: dict = {
             "enabled": bool(config.get("music_assistant", {}).get("enabled", True)),
             "state": "stopped",
@@ -75,6 +77,7 @@ class SnapcastManager:
             "(ControlServer) New connection from:",
             "(ControlServer) Removing",
             "(ControlSessionHTTP) ControlSessionHttp::on_read error: bad method",
+            "(ControlSessionTCP) Error while reading from control socket: End of file",
             "(StreamServer) StreamServer::NewConnection:",
             "(StreamSessionTCP) unknown message type received:",
             "(StreamServer) onDisconnect:",
@@ -131,7 +134,7 @@ class SnapcastManager:
 
         final_stream = find_stream(server, self.config["snapcast"]["stream_name"])
         ma_stream = find_music_assistant_stream(server, ma_cfg.get("stream_prefix", "MusicAssistant"), final_stream)
-        await self.ensure_tap_process()
+        tap_started = await self.ensure_tap_process()
         await asyncio.sleep(0.25)
         status = await self.server_status()
         server = extract_server(status) or server
@@ -141,6 +144,21 @@ class SnapcastManager:
         groups = summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
         clients = summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
         user_client_count = sum(1 for client in clients if not client.get("internal_tap"))
+        if not tap_started:
+            await self.disable_tap_audio()
+            self.bridge_status = {
+                "enabled": True,
+                "state": "tap_retry_wait",
+                "ma_stream": ma_stream,
+                "final_stream": final_stream,
+                "tap_client": client_id(tap_client),
+                "tap_group": group_id(find_group_for_client(server, tap_client)),
+                "user_client_count": user_client_count,
+                "groups": groups,
+                "clients": clients,
+                "error": self.tap_error or "Audio Hub Mix Input snapclient is waiting before retrying",
+            }
+            return self.bridge_status
         if not ma_stream:
             await self.disable_tap_audio()
             self.bridge_status = {
@@ -207,9 +225,17 @@ class SnapcastManager:
         }
         return self.bridge_status
 
-    async def ensure_tap_process(self) -> None:
+    async def ensure_tap_process(self) -> bool:
         if self.tap_process and self.tap_process.running():
-            return
+            self.tap_error = ""
+            return True
+        now = asyncio.get_running_loop().time()
+        if self.tap_process and self.tap_process.started:
+            self.tap_error = "\n".join(self.tap_process.last_output[-6:]) or "Audio Hub Mix Input snapclient exited"
+            self.tap_process = None
+            self.tap_retry_after = max(self.tap_retry_after, now + 20)
+        if now < self.tap_retry_after:
+            return False
         ma_cfg = self.config.get("music_assistant", {})
         tap_id = ma_cfg.get("tap_client_id", "audio-hub-ma-tap")
         command = [
@@ -227,15 +253,24 @@ class SnapcastManager:
             "--soundcard",
             "ma_music_tap",
             "--sampleformat",
-            f"{self.config['audio']['sample_rate']}:16:{self.config['audio']['channels']}",
+            f"{self.config['audio']['sample_rate']}:16:*",
         ]
         self.tap_process = ManagedProcess(
             "ma-snapcast-tap",
             command,
             env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=ma_snapcast_tap"},
-            quiet_substrings=["daemon started", "metadata"],
+            quiet_substrings=["daemon started", "metadata", "Options '--host' and '--port' are deprecated"],
         )
         await self.tap_process.start()
+        await asyncio.sleep(0.35)
+        if not self.tap_process.running():
+            self.tap_error = "\n".join(self.tap_process.last_output[-6:]) or "Audio Hub Mix Input snapclient exited immediately"
+            self.tap_process = None
+            self.tap_retry_after = asyncio.get_running_loop().time() + 20
+            return False
+        self.tap_error = ""
+        self.tap_retry_after = 0.0
+        return True
 
     async def ensure_tap_audio(self) -> None:
         if self.tap_loopback_module:
