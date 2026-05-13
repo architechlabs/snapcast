@@ -31,6 +31,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "wired_input": wired_input_state(devices, pulse),
         "input_message": input_message(devices),
         "capture_mode": getattr(pulse, "wired_capture_mode", "none") if pulse else "none",
+        "capture_bridge": getattr(pulse, "host_pulse_bridge_engine", "") if pulse else "",
         "capture_error": getattr(pulse, "wired_error", "") if pulse else "",
         "haos_audio_error": getattr(pulse, "host_pulse_error", "") if pulse else "",
         "network_input": "enabled" if config["network"]["enabled"] else "disabled",

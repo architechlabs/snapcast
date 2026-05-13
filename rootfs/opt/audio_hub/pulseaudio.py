@@ -43,6 +43,7 @@ class PulseAudioManager:
         self.host_pulse_env: dict[str, str] | None = None
         self.host_pulse_source: str | None = None
         self.host_pulse_bridge_engine = ""
+        self.last_input_level: dict | None = None
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -446,6 +447,7 @@ class PulseAudioManager:
         return False
 
     async def _prepare_host_pulse_source(self, host_env: dict[str, str], source: str) -> None:
+        await run_checked(["pactl", "suspend-source", source, "0"], timeout=4, env=host_env)
         await run_checked(["pactl", "set-source-mute", source, "0"], timeout=4, env=host_env)
         await run_checked(["pactl", "set-source-volume", source, "100%"], timeout=4, env=host_env)
 
@@ -632,6 +634,8 @@ class PulseAudioManager:
         self.host_pulse_error = ""
         self.host_pulse_env = None
         self.host_pulse_source = None
+        self.host_pulse_bridge_engine = ""
+        self.last_input_level = None
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -724,12 +728,16 @@ class PulseAudioManager:
             "16000",
             "--channels=1",
         ]
-        rc, raw, err = await run_binary(command, timeout=0.25, env=PULSE_ENV, max_bytes=16000)
+        rc, raw, err = await run_binary(command, timeout=0.5, env=PULSE_ENV, max_bytes=32000)
         if not raw:
+            if self.last_input_level:
+                return {**self.last_input_level, "stale": True}
             error = err.decode(errors="replace")[:400] or self.wired_error or "no PCM bytes received from mixer monitor"
             return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": error}
         level, peak = pcm16_level(raw)
-        return {"ok": rc in (0, 124), "state": signal_state(level, peak), "level": level, "peak": peak, "mode": self.wired_capture_mode, "stage": "mixer"}
+        result = {"ok": rc in (0, 124), "state": signal_state(level, peak), "level": level, "peak": peak, "mode": self.wired_capture_mode, "stage": "mixer"}
+        self.last_input_level = result
+        return result
 
     async def monitor_clip(self, seconds: float = 3.0) -> bytes:
         duration = max(1.0, min(10.0, seconds))
@@ -883,6 +891,8 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         "low_delay",
         "-f",
         "pulse",
+        "-thread_queue_size",
+        "32",
         "-server",
         host_server,
         "-fragment_size",
@@ -898,6 +908,12 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         "-server",
         local_server,
         "-fragment_size",
+        str(frames),
+        "-buffer_duration",
+        str(max(10, latency)),
+        "-prebuf",
+        "0",
+        "-minreq",
         str(frames),
         "snap_hub_mix",
     ]
