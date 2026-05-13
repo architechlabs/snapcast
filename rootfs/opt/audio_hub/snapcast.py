@@ -205,23 +205,6 @@ class SnapcastManager:
         if group_stream(tap_group) != ma_stream:
             await self.set_group_stream(group_id(tap_group), ma_stream)
             await asyncio.sleep(0.15)
-        if ma_stream_state and ma_stream_state != "playing":
-            await self.disable_tap_audio()
-            self.bridge_status = {
-                "enabled": True,
-                "state": "waiting_for_music",
-                "ma_stream": ma_stream,
-                "ma_stream_state": ma_stream_state,
-                "final_stream": final_stream,
-                "final_stream_state": final_stream_state,
-                "tap_client": client_id(tap_client),
-                "tap_group": group_id(tap_group),
-                "user_client_count": user_client_count,
-                "groups": groups,
-                "clients": clients,
-                "error": "",
-            }
-            return self.bridge_status
         await self.ensure_tap_audio()
         await self.apply_music_volume()
         tap_group_has_speakers = group_has_clients_other_than(tap_group, client_id(tap_client))

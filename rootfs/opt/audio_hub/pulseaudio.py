@@ -111,14 +111,15 @@ class PulseAudioManager:
             await self._setup_bluetooth()
 
         await self._apply_volumes()
-        await self._start_silence_keepalive(rate, channels)
+        if cfg["audio"].get("keepalive_silence", False):
+            await self._start_silence_keepalive(rate, channels)
 
         parec = ManagedProcess(
             "mix-monitor-to-snapfifo",
             [
                 "bash",
                 "-lc",
-                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(20, min(80, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
+                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(10, min(40, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
             ],
             env=PULSE_ENV,
         )
@@ -793,7 +794,7 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     source_arg = shlex.quote(source)
     cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else " PULSE_COOKIE="
     runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else " PULSE_RUNTIME_PATH="
-    latency = max(20, min(80, int(latency_ms)))
+    latency = max(10, min(40, int(latency_ms)))
     return (
         f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
         f"parec -d {source_arg} --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "

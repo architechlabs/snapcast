@@ -18,8 +18,9 @@ DEFAULTS: dict[str, Any] = {
         "sample_rate": 48000,
         "channels": 2,
         "format": "s16le",
-        "latency_ms": 50,
-        "buffer_ms": 250,
+        "latency_ms": 25,
+        "buffer_ms": 120,
+        "keepalive_silence": False,
         "routing_mode": "mix",
     },
     "wired": {
@@ -48,8 +49,8 @@ DEFAULTS: dict[str, Any] = {
         "jsonrpc_port": 41705,
         "http_port": 41780,
         "codec": "pcm",
-        "buffer_ms": 300,
-        "chunk_ms": 10,
+        "buffer_ms": 120,
+        "chunk_ms": 5,
     },
     "music_assistant": {
         "enabled": True,
@@ -99,6 +100,7 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     config["audio"]["channels"] = int(config["audio"]["channels"])
     config["audio"]["latency_ms"] = int(config["audio"]["latency_ms"])
     config["audio"]["buffer_ms"] = int(config["audio"]["buffer_ms"])
+    config["audio"]["keepalive_silence"] = bool(config["audio"].get("keepalive_silence", False))
     config["wired"]["volume"] = clamp(float(config["wired"]["volume"]), 0.0, 2.0)
     config["network"]["volume"] = clamp(float(config["network"]["volume"]), 0.0, 2.0)
     config["wireless"]["volume"] = clamp(float(config["wireless"]["volume"]), 0.0, 2.0)
@@ -114,10 +116,10 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
         config["snapcast"][key] = int(config["snapcast"][key])
     config["snapcast"]["chunk_ms"] = int(config["snapcast"].get("chunk_ms", 10))
     if config["music_assistant"]["low_latency_mode"]:
-        config["audio"]["latency_ms"] = min(config["audio"]["latency_ms"], 60)
-        config["audio"]["buffer_ms"] = min(config["audio"]["buffer_ms"], 300)
-        config["snapcast"]["buffer_ms"] = min(config["snapcast"]["buffer_ms"], 350)
-        config["snapcast"]["chunk_ms"] = min(config["snapcast"]["chunk_ms"], 10)
+        config["audio"]["latency_ms"] = min(config["audio"]["latency_ms"], 35)
+        config["audio"]["buffer_ms"] = min(config["audio"]["buffer_ms"], 150)
+        config["snapcast"]["buffer_ms"] = min(config["snapcast"]["buffer_ms"], 180)
+        config["snapcast"]["chunk_ms"] = min(config["snapcast"]["chunk_ms"], 5)
     for key, (old_port, new_port) in SNAPCAST_PORT_MIGRATIONS.items():
         if config["snapcast"][key] == old_port:
             config["snapcast"][key] = new_port

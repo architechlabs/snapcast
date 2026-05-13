@@ -48,52 +48,33 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return web.Response(body=clip, content_type="audio/wav")
 
     async def live_stream(request):
-        if request.query.get("free") not in ("1", "true", "yes") and not await live_transport_active():
-            return web.Response(status=204, headers={"Cache-Control": "no-store"})
+        return await live_encoded_stream(request, "mp3")
+
+    async def live_opus_stream(request):
+        return await live_encoded_stream(request, "opus")
+
+    async def live_encoded_stream(request, codec: str):
         response = web.StreamResponse(
             status=200,
             headers={
-                "Content-Type": "audio/mpeg",
+                "Content-Type": "audio/ogg; codecs=opus" if codec == "opus" else "audio/mpeg",
                 "Cache-Control": "no-store",
                 "Connection": "keep-alive",
             },
         )
         await response.prepare(request)
+        command = live_encoder_command(codec)
         proc = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "pulse",
-            "-i",
-            "snap_hub_mix.monitor",
-            "-ac",
-            "2",
-            "-ar",
-            "48000",
-            "-codec:a",
-            "libmp3lame",
-            "-b:a",
-            "192k",
-            "-f",
-            "mp3",
-            "-",
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env=PULSE_ENV,
         )
         try:
-            checked_at = asyncio.get_running_loop().time()
             while proc.stdout:
-                chunk = await proc.stdout.read(8192)
+                chunk = await proc.stdout.read(2048 if codec == "opus" else 8192)
                 if not chunk:
                     break
-                now = asyncio.get_running_loop().time()
-                if request.query.get("free") not in ("1", "true", "yes") and now - checked_at >= 2.0:
-                    checked_at = now
-                    if not await live_transport_active():
-                        break
                 await response.write(chunk)
         except (ConnectionResetError, asyncio.CancelledError):
             pass
@@ -107,23 +88,54 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
                     await proc.wait()
         return response
 
-    async def live_transport_active() -> bool:
-        try:
-            status_data = await status_provider()
-        except Exception:
-            return True
-        config = status_data.get("config", {})
-        bridge = status_data.get("snapcast_bridge", {})
-        ma_enabled = bool(config.get("music_assistant", {}).get("enabled", True))
-        if not ma_enabled:
-            return True
-        bridge_state = bridge.get("state")
-        ma_state = bridge.get("ma_stream_state")
-        if bridge_state in ("waiting_for_music", "tap_connecting", "tap_retry_wait", "disabled", "snapserver_unavailable"):
-            return False
-        if ma_state and ma_state != "playing":
-            return False
-        return True
+    def live_encoder_command(codec: str) -> list[str]:
+        base = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-fflags",
+            "nobuffer",
+            "-flags",
+            "low_delay",
+            "-f",
+            "pulse",
+            "-fragment_size",
+            "960",
+            "-i",
+            "snap_hub_mix.monitor",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+        ]
+        if codec == "opus":
+            return [
+                *base,
+                "-codec:a",
+                "libopus",
+                "-application",
+                "lowdelay",
+                "-frame_duration",
+                "10",
+                "-b:a",
+                "96k",
+                "-f",
+                "ogg",
+                "-flush_packets",
+                "1",
+                "-",
+            ]
+        return [
+            *base,
+            "-codec:a",
+            "libmp3lame",
+            "-q:a",
+            "4",
+            "-f",
+            "mp3",
+            "-",
+        ]
 
     async def snapcast_action(request):
         payload = await request.json()
@@ -138,6 +150,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
     app.router.add_get("/api/live.mp3", live_stream)
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
+    app.router.add_get("/api/live.opus", live_opus_stream)
+    app.router.add_get("/{prefix:.+}/api/live.opus", live_opus_stream)
     app.router.add_post("/api/snapcast/action", snapcast_action)
     app.router.add_post("/{prefix:.+}/api/snapcast/action", snapcast_action)
     app.router.add_patch("/api/config", patch_config)
