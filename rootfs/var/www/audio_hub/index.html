@@ -720,7 +720,7 @@
         $("mainMeterFill").style.width = `${percent}%`;
         const err = level.error ? ` - ${level.error.slice(0, 120)}` : "";
         const stage = level.stage ? ` / ${level.stage}` : "";
-        const bridge = level.bridge_engine ? ` / ${level.bridge_engine}` : "";
+        const bridge = level.bridge_engine ? ` / ${level.bridge_engine}${level.stale ? " cached" : ""}` : "";
         const mix = typeof level.mix_level === "number" ? ` / mix ${Math.round(level.mix_level * 100)}%` : "";
         const rms = Math.round((level.level || 0) * 1000) / 10;
         const peak = Math.round((level.peak || 0) * 1000) / 10;

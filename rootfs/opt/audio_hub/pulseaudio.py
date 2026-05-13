@@ -44,6 +44,7 @@ class PulseAudioManager:
         self.host_pulse_source: str | None = None
         self.host_pulse_bridge_engine = ""
         self.last_input_level: dict | None = None
+        self.host_pulse_source_suspended = False
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -209,6 +210,9 @@ class PulseAudioManager:
         capture_latency = int(self.config["wired"].get("latency_ms", min(latency, 20)))
         host_pulse_tried = False
 
+        if backend == "auto" and await self._try_exclusive_alsa_after_host_release(devices, candidates):
+            return
+
         if backend == "auto" and host_pulse_env_candidates():
             host_pulse_tried = True
             if await self._start_host_pulse_bridge(devices, capture_latency):
@@ -362,10 +366,12 @@ class PulseAudioManager:
                 "warning",
                 "-fflags",
                 "nobuffer",
+                "-flags",
+                "low_delay",
                 "-f",
                 "alsa",
                 "-thread_queue_size",
-                "64",
+                "32",
                 "-i",
                 device,
                 "-ar",
@@ -450,6 +456,12 @@ class PulseAudioManager:
         await run_checked(["pactl", "suspend-source", source, "0"], timeout=4, env=host_env)
         await run_checked(["pactl", "set-source-mute", source, "0"], timeout=4, env=host_env)
         await run_checked(["pactl", "set-source-volume", source, "100%"], timeout=4, env=host_env)
+        self.host_pulse_source_suspended = False
+
+    async def _release_host_pulse_source(self, host_env: dict[str, str], source: str) -> None:
+        await run_checked(["pactl", "set-source-mute", source, "0"], timeout=4, env=host_env)
+        await run_checked(["pactl", "suspend-source", source, "1"], timeout=4, env=host_env)
+        await asyncio.sleep(0.2)
 
     async def _host_pulse_env(self) -> dict[str, str] | None:
         for env in host_pulse_env_candidates():
@@ -621,6 +633,8 @@ class PulseAudioManager:
             await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
 
     async def stop(self) -> None:
+        if self.host_pulse_source_suspended and self.host_pulse_env and self.host_pulse_source:
+            await run_checked(["pactl", "suspend-source", self.host_pulse_source, "0"], timeout=4, env=self.host_pulse_env)
         for process in reversed(list(self.processes.values())):
             await process.stop()
         self.processes.clear()
@@ -636,6 +650,30 @@ class PulseAudioManager:
         self.host_pulse_source = None
         self.host_pulse_bridge_engine = ""
         self.last_input_level = None
+        self.host_pulse_source_suspended = False
+
+    async def _try_exclusive_alsa_after_host_release(self, devices: dict, candidates: list[str]) -> bool:
+        host_env = await self._host_pulse_env()
+        if not host_env:
+            return False
+        source = await self._select_host_pulse_source(devices, host_env)
+        if not source:
+            return False
+        await self._release_host_pulse_source(host_env, source)
+        for candidate in candidates:
+            if await self._start_ffmpeg_alsa_bridge(candidate):
+                self.wired_source_loaded = True
+                self.wired_device = candidate
+                self.wired_capture_mode = "ffmpeg_alsa_bridge"
+                self.wired_busy = False
+                self.host_pulse_env = host_env
+                self.host_pulse_source = source
+                self.host_pulse_bridge_engine = "exclusive_alsa"
+                self.host_pulse_source_suspended = True
+                LOG.info("wired input attached directly through ALSA after releasing HAOS PulseAudio source %s", source)
+                return True
+        await self._prepare_host_pulse_source(host_env, source)
+        return False
 
     def health(self) -> str:
         pulse = self.processes.get("pulseaudio")
@@ -873,7 +911,9 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
 
 def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate: int, channels: int, latency_ms: int) -> list[str]:
     latency = max(5, min(20, int(latency_ms)))
-    frames = max(240, int(rate) * latency // 1000)
+    bytes_per_frame = int(channels) * 2
+    fragment_bytes = max(480, int(rate) * bytes_per_frame * latency // 1000)
+    minreq_bytes = max(240, fragment_bytes // 2)
     host_server = host_env.get("PULSE_SERVER", "")
     local_server = PULSE_ENV["PULSE_SERVER"]
     return [
@@ -881,6 +921,7 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         "-hide_banner",
         "-loglevel",
         "warning",
+        "-nostdin",
         "-probesize",
         "32",
         "-analyzeduration",
@@ -891,12 +932,14 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         "low_delay",
         "-f",
         "pulse",
+        "-name",
+        "audio_hub_host_capture",
         "-thread_queue_size",
         "32",
         "-server",
         host_server,
         "-fragment_size",
-        str(frames),
+        str(fragment_bytes),
         "-i",
         source,
         "-ac",
@@ -907,15 +950,19 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         "pulse",
         "-server",
         local_server,
+        "-device",
+        "snap_hub_mix",
+        "-stream_name",
+        "host_pulse_bridge",
         "-fragment_size",
-        str(frames),
+        str(fragment_bytes),
         "-buffer_duration",
         str(max(10, latency)),
         "-prebuf",
         "0",
         "-minreq",
-        str(frames),
-        "snap_hub_mix",
+        str(minreq_bytes),
+        "host_pulse_bridge",
     ]
 
 
