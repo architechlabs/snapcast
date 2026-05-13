@@ -185,6 +185,7 @@ class SnapcastManager:
             return self.bridge_status
         if not ma_stream:
             await self.disable_tap_audio()
+            await self.set_music_loopback_muted(True)
             self.bridge_status = {
                 "enabled": True,
                 "state": "waiting_for_snapcast_players" if user_client_count == 0 else "waiting_for_music",
@@ -204,6 +205,7 @@ class SnapcastManager:
         tap_group = find_group_for_client(server, tap_client)
         if not tap_client or not tap_group:
             await self.disable_tap_audio()
+            await self.set_music_loopback_muted(True)
             self.bridge_status = {
                 "enabled": True,
                 "state": "tap_connecting",
@@ -220,11 +222,33 @@ class SnapcastManager:
             }
             return self.bridge_status
 
-        if group_stream(tap_group) != ma_stream:
+        tap_stream = group_stream(tap_group)
+        if tap_stream == final_stream:
+            await self.disable_tap_audio()
+            await self.set_music_loopback_muted(True)
+            self.bridge_status = {
+                "enabled": True,
+                "state": "tap_on_final_stream_blocked",
+                "ma_stream": ma_stream,
+                "ma_stream_state": ma_stream_state,
+                "final_stream": final_stream,
+                "final_stream_state": final_stream_state,
+                "tap_client": client_id(tap_client),
+                "tap_group": group_id(tap_group),
+                "tap_group_stream": tap_stream,
+                "user_client_count": user_client_count,
+                "groups": groups,
+                "clients": clients,
+                "error": "Audio Hub Mix Input is currently on the final AudioHub stream. Its loopback is blocked to prevent delayed feedback; route/play Music Assistant audio to Audio Hub Mix Input to enable music mixing.",
+            }
+            return self.bridge_status
+
+        if tap_stream != ma_stream:
             if ma_cfg.get("manage_tap_group_stream", False):
                 await self.set_group_stream(group_id(tap_group), ma_stream)
                 await asyncio.sleep(0.15)
             else:
+                await self.disable_tap_audio()
                 await self.set_music_loopback_muted(True)
                 self.bridge_status = {
                     "enabled": True,
@@ -235,7 +259,7 @@ class SnapcastManager:
                     "final_stream_state": final_stream_state,
                     "tap_client": client_id(tap_client),
                     "tap_group": group_id(tap_group),
-                    "tap_group_stream": group_stream(tap_group),
+                    "tap_group_stream": tap_stream,
                     "user_client_count": user_client_count,
                     "groups": groups,
                     "clients": clients,
