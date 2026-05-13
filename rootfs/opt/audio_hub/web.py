@@ -41,10 +41,10 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return web.json_response(await remove_entities_handler())
 
     async def input_level(request):
-        return web.json_response(await input_level_handler())
+        return web.json_response(await input_level_handler(), headers=no_store_headers())
 
     async def latency_report(request):
-        return web.json_response(await latency_report_handler())
+        return web.json_response(await latency_report_handler(), headers=no_store_headers())
 
     async def monitor_clip(request):
         clip = await monitor_clip_handler()
@@ -278,6 +278,14 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_post("/{prefix:.+}/api/entities/remove", remove_entities)
     app.router.add_static("/static", static_root)
     return app
+
+
+def no_store_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-store, no-cache, max-age=0, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
 
 
 def wav_stream_header(sample_rate: int, channels: int, bits: int) -> bytes:

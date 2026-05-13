@@ -6,6 +6,7 @@ import re
 import shlex
 import struct
 import time
+from collections import deque
 from pathlib import Path
 
 from process import ManagedProcess, run_binary, run_checked
@@ -51,6 +52,9 @@ class PulseAudioManager:
         self.level_proc: asyncio.subprocess.Process | None = None
         self.current_input_level: dict | None = None
         self.current_input_level_at = 0.0
+        self.current_input_level_wall = 0.0
+        self.current_input_level_sequence = 0
+        self.input_level_history = deque(maxlen=30)
         self.host_pulse_source_suspended = False
 
     async def start(self, devices: dict) -> None:
@@ -171,7 +175,7 @@ class PulseAudioManager:
 
     async def _level_monitor_loop(self) -> None:
         rate = 16000
-        chunk_bytes = 1600
+        chunk_bytes = 640
         while True:
             proc = await asyncio.create_subprocess_exec(
                 "parec",
@@ -195,16 +199,29 @@ class PulseAudioManager:
                     if not raw:
                         break
                     level, peak = pcm16_level(raw)
+                    now = time.monotonic()
+                    wall = time.time()
+                    self.input_level_history.append((now, level, peak))
+                    recent = [(rms, pk) for ts, rms, pk in self.input_level_history if now - ts <= 0.35]
+                    window_level = max((rms for rms, _ in recent), default=level)
+                    window_peak = max((pk for _, pk in recent), default=peak)
+                    self.current_input_level_sequence += 1
                     result = {
                         "ok": True,
-                        "state": signal_state(level, peak),
-                        "level": level,
-                        "peak": peak,
+                        "state": signal_state(window_level, window_peak),
+                        "level": round(window_level, 4),
+                        "peak": round(window_peak, 4),
+                        "instant_level": level,
+                        "instant_peak": peak,
                         "mode": self.wired_capture_mode,
                         "stage": "realtime_mixer",
+                        "sequence": self.current_input_level_sequence,
+                        "updated_at": round(wall, 3),
+                        "window_ms": 350,
                     }
                     self.current_input_level = result
-                    self.current_input_level_at = time.monotonic()
+                    self.current_input_level_at = now
+                    self.current_input_level_wall = wall
                     self.last_input_level = result
             except asyncio.CancelledError:
                 if proc.returncode is None:
@@ -816,6 +833,9 @@ class PulseAudioManager:
         self.last_input_level = None
         self.current_input_level = None
         self.current_input_level_at = 0.0
+        self.current_input_level_wall = 0.0
+        self.current_input_level_sequence = 0
+        self.input_level_history.clear()
         self.host_pulse_source_suspended = False
 
     async def _try_exclusive_alsa_after_host_release(self, devices: dict, candidates: list[str]) -> bool:
@@ -883,7 +903,13 @@ class PulseAudioManager:
                 "bridge": "running",
             }
         if self.current_input_level and time.monotonic() - self.current_input_level_at < 1.0:
-            return {**self.current_input_level, "engine": self.wired_bridge_engine or self.host_pulse_bridge_engine}
+            age_ms = max(0, int((time.monotonic() - self.current_input_level_at) * 1000))
+            return {
+                **self.current_input_level,
+                "age_ms": age_ms,
+                "live": age_ms < 250,
+                "engine": self.wired_bridge_engine or self.host_pulse_bridge_engine,
+            }
         if self.wired_capture_mode == "pulseaudio_source":
             command = [
                 "parec",

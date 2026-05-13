@@ -26,6 +26,7 @@ async function api(path, options = {}) {
     try {
       const response = await fetch(candidate, {
         headers: { "content-type": "application/json" },
+        cache: "no-store",
         ...options,
       });
       if (!response.ok) {
