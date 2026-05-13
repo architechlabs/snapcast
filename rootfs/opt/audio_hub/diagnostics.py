@@ -19,7 +19,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
 
     snap_status = "running" if snapcast.running() else "stopped"
     pulse_status = pulse.health() if pulse else "stopped"
-    active_source = infer_active_source(config)
+    active_source = infer_active_source(config, getattr(snapcast, "bridge_status", {}) if snapcast else {})
     health = {
         "pipeline": "running" if snap_status == "running" and pulse_status == "running" else "degraded",
         "snapcast": snap_status,
@@ -49,7 +49,12 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
     }
 
 
-def infer_active_source(config: dict) -> str:
+def infer_active_source(config: dict, bridge_status: dict | None = None) -> str:
+    bridge_state = (bridge_status or {}).get("state")
+    if bridge_state in ("mixing_music", "mixing_music_no_output_players"):
+        if config["wired"]["enabled"] and config.get("music_assistant", {}).get("mic_injection_enabled", True):
+            return "ma_music+wired"
+        return "ma_music"
     mode = config["audio"]["routing_mode"]
     if mode == "mix":
         enabled = []

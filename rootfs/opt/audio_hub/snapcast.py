@@ -197,6 +197,7 @@ class SnapcastManager:
             await self.set_group_stream(group_id(tap_group), ma_stream)
             await asyncio.sleep(0.15)
         await self.ensure_tap_audio()
+        await self.apply_music_volume()
         tap_group_has_speakers = group_has_clients_other_than(tap_group, client_id(tap_client))
 
         rerouted = []
@@ -209,6 +210,13 @@ class SnapcastManager:
                 if group_stream(group) == ma_stream:
                     await self.set_group_stream(group_id(group), final_stream)
                     rerouted.append(group_id(group))
+            if rerouted:
+                status = await self.server_status()
+                server = extract_server(status) or server
+
+        groups = summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
+        clients = summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
+        user_client_count = sum(1 for client in clients if not client.get("internal_tap"))
 
         self.bridge_status = {
             "enabled": True,
@@ -220,8 +228,8 @@ class SnapcastManager:
             "user_client_count": user_client_count,
             "tap_group_has_speakers": tap_group_has_speakers,
             "rerouted_groups": rerouted,
-            "groups": summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap")),
-            "clients": summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap")),
+            "groups": groups,
+            "clients": clients,
             "error": "Do not group Audio Hub Mix Input with speaker clients in Music Assistant; keep it as the source/tap player only." if tap_group_has_speakers else ("Music is being mixed, but no real Snapcast playback clients are connected." if user_client_count == 0 else ""),
         }
         return self.bridge_status
@@ -273,6 +281,13 @@ class SnapcastManager:
                 "(PulsePlayer) Connecting to pulse",
                 "(PulsePlayer) Start",
                 "(Stream) No chunks available",
+                "(Controller) Codec:",
+                "(Controller) ServerSettings",
+                "(Player) Player name:",
+                "(Player) Mixer mode:",
+                "(Player) Sampleformat:",
+                "(PulsePlayer) Setting property",
+                "(PulsePlayer) Using buffer_time:",
             ],
         )
         await self.tap_process.start()
@@ -295,13 +310,33 @@ class SnapcastManager:
             "source=ma_music_tap.monitor",
             "sink=snap_hub_mix",
             f"latency_msec={self.config['audio']['latency_ms']}",
-            "sink_input_properties=media.role=music application.name=ma_music_tap",
+            "sink_input_properties=application.name=ma_music_tap",
         ]
         rc, out = await run_checked(["pactl", *args], timeout=5, env=PULSE_ENV)
         if rc == 0 and out.strip().isdigit():
             self.tap_loopback_module = out.strip()
             return
         LOG.warning("could not enable MA music tap loopback: %s", out.strip())
+
+    async def apply_music_volume(self) -> None:
+        volume = self.config.get("music_assistant", {}).get("music_volume", 0.85)
+        percent = f"{max(0, min(200, int(float(volume) * 100)))}%"
+        rc, out = await run_checked(["pactl", "list", "sink-inputs"], timeout=5, env=PULSE_ENV)
+        if rc != 0:
+            return
+        current = None
+        matched = False
+        for line in out.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("Sink Input #"):
+                if current is not None and matched:
+                    await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
+                current = stripped.replace("Sink Input #", "").strip()
+                matched = False
+            elif "application.name" in stripped:
+                matched = "ma_music_tap" in stripped or "ma_snapcast_tap" in stripped
+        if current is not None and matched:
+            await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
 
     async def disable_tap_audio(self) -> None:
         if self.tap_loopback_module:
@@ -380,7 +415,7 @@ def stream_key(value: str) -> str:
 
 def find_tap_client(server: dict, tap_id: str) -> dict | None:
     tap_id = tap_id.lower()
-    for client in server.get("clients", []):
+    for client in all_clients(server):
         if tap_id in json.dumps(client, sort_keys=True).lower():
             return client
     return None
@@ -390,10 +425,12 @@ def find_group_for_client(server: dict, client: dict | None) -> dict | None:
     cid = client_id(client) if client else None
     if not cid:
         return None
+    cid_lower = cid.lower()
     for group in server.get("groups", []):
         for item in group.get("clients", []):
             item_id = item.get("id") if isinstance(item, dict) else item
-            if item_id == cid:
+            item_text = json.dumps(item, sort_keys=True).lower() if isinstance(item, dict) else str(item).lower()
+            if item_id == cid or cid_lower in item_text:
                 return group
     return None
 
@@ -401,9 +438,11 @@ def find_group_for_client(server: dict, client: dict | None) -> dict | None:
 def group_has_clients_other_than(group: dict | None, tap_client_id: str | None) -> bool:
     if not isinstance(group, dict) or not tap_client_id:
         return False
+    tap_lower = tap_client_id.lower()
     for item in group.get("clients", []):
         item_id = item.get("id") if isinstance(item, dict) else item
-        if item_id and item_id != tap_client_id:
+        item_text = json.dumps(item, sort_keys=True).lower() if isinstance(item, dict) else str(item).lower()
+        if item_id and item_id != tap_client_id and tap_lower not in item_text:
             return True
     return False
 
@@ -420,6 +459,30 @@ def group_stream(group: dict | None) -> str | None:
 
 def client_id(client: dict | None) -> str | None:
     return str(client.get("id")) if isinstance(client, dict) and client.get("id") is not None else None
+
+
+def all_clients(server: dict) -> list[dict]:
+    result = []
+    seen = set()
+
+    def add(client):
+        if not isinstance(client, dict):
+            return
+        key = client_id(client) or json.dumps(client, sort_keys=True)
+        if key in seen:
+            return
+        seen.add(key)
+        result.append(client)
+
+    for client in server.get("clients", []):
+        add(client)
+    for group in server.get("groups", []):
+        for client in group.get("clients", []):
+            if isinstance(client, dict):
+                add(client)
+            elif client:
+                add({"id": str(client)})
+    return result
 
 
 def summarize_groups(server: dict, tap_id: str = "audio-hub-ma-tap") -> list[dict]:
@@ -441,7 +504,7 @@ def summarize_groups(server: dict, tap_id: str = "audio-hub-ma-tap") -> list[dic
 
 def summarize_clients(server: dict, tap_id: str = "audio-hub-ma-tap") -> list[dict]:
     result = []
-    for client in server.get("clients", []):
+    for client in all_clients(server):
         host = client.get("host", {}) if isinstance(client.get("host"), dict) else {}
         config = client.get("config", {}) if isinstance(client.get("config"), dict) else {}
         volume = config.get("volume", {}) if isinstance(config.get("volume"), dict) else {}

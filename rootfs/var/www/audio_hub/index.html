@@ -465,6 +465,7 @@
           <code id="liveUrl">Loading live URL...</code>
           <button id="copyLiveUrl" class="secondary">Copy</button>
         </div>
+        <audio id="livePreview" controls preload="none"></audio>
       </article>
     </section>
 
@@ -661,7 +662,11 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      $("liveUrl").textContent = `${window.location.protocol}//${window.location.hostname}:41888/api/live.mp3`;
+      const liveUrl = apiUrl("/api/live.mp3");
+      $("liveUrl").textContent = liveUrl;
+      if ($("livePreview").src !== new URL(liveUrl, window.location.href).href) {
+        $("livePreview").src = liveUrl;
+      }
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
       const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
