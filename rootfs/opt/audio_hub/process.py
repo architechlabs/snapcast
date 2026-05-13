@@ -61,11 +61,17 @@ class ManagedProcess:
             return
         if self.proc.returncode is None:
             LOG.info("stopping %s", self.name)
-            self.proc.send_signal(signal.SIGTERM)
+            try:
+                self.proc.send_signal(signal.SIGTERM)
+            except ProcessLookupError:
+                pass
             try:
                 await asyncio.wait_for(self.proc.wait(), timeout=8)
             except TimeoutError:
-                self.proc.kill()
+                try:
+                    self.proc.kill()
+                except ProcessLookupError:
+                    pass
                 await self.proc.wait()
         if self.log_task:
             if not self.log_task.done():
@@ -121,7 +127,11 @@ async def run_binary(command: Sequence[str], timeout: int = 5, env: dict[str, st
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
-        proc.kill()
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
         stdout, stderr = await proc.communicate()
         return 124, stdout[:max_bytes], stderr[:max_bytes]
     return proc.returncode or 0, stdout[:max_bytes], stderr[:max_bytes]

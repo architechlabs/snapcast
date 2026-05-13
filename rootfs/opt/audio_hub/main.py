@@ -74,7 +74,18 @@ class AudioHub:
             await asyncio.sleep(settle)
 
     async def start_web(self) -> None:
-        app = create_app(self.status, self.patch_config, self.restart_pipeline, self.retry_wired_input, self.reload_devices, self.remove_entities, self.input_level, self.monitor_clip, self.snapcast_action)
+        app = create_app(
+            self.status,
+            self.patch_config,
+            self.restart_pipeline,
+            self.retry_wired_input,
+            self.reload_devices,
+            self.remove_entities,
+            self.input_level,
+            self.monitor_clip,
+            self.latency_report,
+            self.snapcast_action,
+        )
         logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
         self.web_runner = web.AppRunner(app, access_log=None)
         await self.web_runner.setup()
@@ -191,6 +202,9 @@ class AudioHub:
 
     async def monitor_clip(self) -> bytes:
         return await self.pulse.monitor_clip(3.0)
+
+    async def latency_report(self) -> dict[str, Any]:
+        return await self.pulse.latency_report()
 
     async def snapcast_action(self, payload: dict[str, Any]) -> dict[str, Any]:
         action = payload.get("action")

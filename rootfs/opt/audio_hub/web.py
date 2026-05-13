@@ -14,7 +14,7 @@ PayloadActionHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 ClipHandler = Callable[[], Awaitable[bytes]]
 
 
-def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, retry_wired_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler, snapcast_action_handler: PayloadActionHandler) -> web.Application:
+def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, restart_handler: ActionHandler, retry_wired_handler: ActionHandler, reload_devices_handler: ActionHandler, remove_entities_handler: ActionHandler, input_level_handler: ActionHandler, monitor_clip_handler: ClipHandler, latency_report_handler: ActionHandler, snapcast_action_handler: PayloadActionHandler) -> web.Application:
     app = web.Application()
     static_root = Path("/var/www/audio_hub")
 
@@ -42,6 +42,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
 
     async def input_level(request):
         return web.json_response(await input_level_handler())
+
+    async def latency_report(request):
+        return web.json_response(await latency_report_handler())
 
     async def monitor_clip(request):
         clip = await monitor_clip_handler()
@@ -201,6 +204,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/status", status)
     app.router.add_get("/api/input-level", input_level)
     app.router.add_get("/{prefix:.+}/api/input-level", input_level)
+    app.router.add_get("/api/latency-report", latency_report)
+    app.router.add_get("/{prefix:.+}/api/latency-report", latency_report)
     app.router.add_get("/api/monitor.wav", monitor_clip)
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
     app.router.add_get("/api/live.mp3", live_stream)

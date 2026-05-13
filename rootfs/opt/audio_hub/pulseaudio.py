@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import os
+import re
 import shlex
 import struct
 from pathlib import Path
@@ -233,6 +234,10 @@ class PulseAudioManager:
                 if self.wired_error:
                     errors.append(f"{candidate}: {self.wired_error}")
 
+        if backend == "auto" and any(is_busy_error(error) for error in errors):
+            if await self._try_exclusive_alsa_after_host_release(devices, candidates):
+                return
+
         if backend == "direct_alsa":
             self.wired_busy = any(is_busy_error(error) for error in errors)
             self.wired_capture_mode = "busy" if self.wired_busy else "none"
@@ -357,6 +362,9 @@ class PulseAudioManager:
 
     async def _start_ffmpeg_alsa_bridge(self, device: str) -> bool:
         cfg = self.config
+        rate = int(cfg["audio"]["sample_rate"])
+        channels = int(cfg["audio"]["channels"])
+        pulse_args = low_latency_pulse_output_args("wired_alsa_bridge", rate, channels, int(cfg["wired"].get("latency_ms", 8)))
         bridge = ManagedProcess(
             "wired-alsa-bridge",
             [
@@ -375,14 +383,13 @@ class PulseAudioManager:
                 "-i",
                 device,
                 "-ar",
-                str(cfg["audio"]["sample_rate"]),
+                str(rate),
                 "-ac",
-                str(cfg["audio"]["channels"]),
-                "-f",
-                "pulse",
+                str(channels),
+                *pulse_args,
                 "snap_hub_mix",
             ],
-            env={**PULSE_ENV, "PULSE_PROP": "media.role=phone application.name=wired_alsa_bridge"},
+            env={**PULSE_ENV, "PULSE_PROP": "media.role=phone application.name=wired_alsa_bridge", "PULSE_LATENCY_MSEC": "5"},
             quiet_substrings=[
                 "cannot open audio device",
                 "Error opening input",
@@ -405,6 +412,31 @@ class PulseAudioManager:
         self.wired_error = ""
         LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
         return True
+
+    async def latency_report(self) -> dict:
+        local = await pulse_latency_snapshot(PULSE_ENV)
+        host = await pulse_latency_snapshot(self.host_pulse_env) if self.host_pulse_env else None
+        report = {
+            "capture": {
+                "attached": self.wired_source_loaded,
+                "mode": self.wired_capture_mode,
+                "device": self.wired_device,
+                "host_source": self.host_pulse_source,
+                "bridge_engine": self.host_pulse_bridge_engine,
+                "host_source_suspended_for_direct_alsa": self.host_pulse_source_suspended,
+                "error": self.wired_error,
+            },
+            "configured_ms": {
+                "wired": self.config["wired"].get("latency_ms"),
+                "audio": self.config["audio"].get("latency_ms"),
+                "snapcast_buffer": self.config["snapcast"].get("buffer_ms"),
+                "snapcast_chunk": self.config["snapcast"].get("chunk_ms"),
+            },
+            "local_pulse": local,
+            "host_pulse": host,
+        }
+        report["summary"] = latency_summary(report)
+        return report
 
     async def _start_host_pulse_bridge(self, devices: dict, latency_ms: int) -> bool:
         host_env = await self._host_pulse_env()
@@ -911,11 +943,8 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
 
 def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate: int, channels: int, latency_ms: int) -> list[str]:
     latency = max(5, min(20, int(latency_ms)))
-    bytes_per_frame = int(channels) * 2
-    fragment_bytes = max(480, int(rate) * bytes_per_frame * latency // 1000)
-    minreq_bytes = max(240, fragment_bytes // 2)
     host_server = host_env.get("PULSE_SERVER", "")
-    local_server = PULSE_ENV["PULSE_SERVER"]
+    pulse_args = low_latency_pulse_output_args("host_pulse_bridge", rate, channels, latency)
     return [
         "ffmpeg",
         "-hide_banner",
@@ -946,14 +975,23 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         str(int(channels)),
         "-ar",
         str(int(rate)),
+        *pulse_args,
+        "snap_hub_mix",
+    ]
+
+
+def low_latency_pulse_output_args(stream_name: str, rate: int, channels: int, latency_ms: int) -> list[str]:
+    latency = max(5, min(20, int(latency_ms)))
+    bytes_per_frame = int(channels) * 2
+    fragment_bytes = max(480, int(rate) * bytes_per_frame * latency // 1000)
+    minreq_bytes = max(240, fragment_bytes // 2)
+    return [
         "-f",
         "pulse",
         "-server",
-        local_server,
-        "-device",
-        "snap_hub_mix",
+        PULSE_ENV["PULSE_SERVER"],
         "-stream_name",
-        "host_pulse_bridge",
+        stream_name,
         "-fragment_size",
         str(fragment_bytes),
         "-buffer_duration",
@@ -962,8 +1000,97 @@ def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate
         "0",
         "-minreq",
         str(minreq_bytes),
-        "host_pulse_bridge",
     ]
+
+
+async def pulse_latency_snapshot(env: dict[str, str] | None) -> dict:
+    if not env:
+        return {"available": False, "error": "PulseAudio environment is not available"}
+    snapshot = {"available": True, "max_reported_ms": 0.0, "sections": {}}
+    for section in ("sources", "source-outputs", "sinks", "sink-inputs"):
+        rc, out = await run_checked(["pactl", "list", section], timeout=5, env=env)
+        if rc != 0:
+            snapshot["sections"][section] = {"error": out.strip()}
+            continue
+        items = parse_pactl_latency_items(out)
+        snapshot["sections"][section] = items
+        for item in items:
+            snapshot["max_reported_ms"] = max(snapshot["max_reported_ms"], item.get("max_latency_ms", 0.0))
+    snapshot["max_reported_ms"] = round(snapshot["max_reported_ms"], 2)
+    return snapshot
+
+
+def parse_pactl_latency_items(text: str) -> list[dict]:
+    items: list[dict] = []
+    current: dict | None = None
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+        header = re.match(r"^(Sink Input|Source Output|Sink|Source) #(\d+)$", stripped)
+        if header:
+            if current:
+                finalize_latency_item(current)
+                items.append(current)
+            current = {"kind": header.group(1), "id": header.group(2), "name": "", "properties": {}, "latencies_ms": []}
+            continue
+        if current is None:
+            continue
+        if stripped.startswith("Name:") or stripped.startswith("Description:") or stripped.startswith("Driver:"):
+            key, value = stripped.split(":", 1)
+            current[key.lower()] = value.strip()
+        elif "application.name" in stripped or "device.description" in stripped or "media.role" in stripped:
+            parts = stripped.split("=", 1)
+            if len(parts) == 2:
+                current["properties"][parts[0].strip()] = parts[1].strip().strip('"')
+        elif "Latency:" in stripped or "latency:" in stripped:
+            current["latencies_ms"].extend(parse_latency_values_ms(stripped))
+    if current:
+        finalize_latency_item(current)
+        items.append(current)
+    return items
+
+
+def finalize_latency_item(item: dict) -> None:
+    values = item.get("latencies_ms", [])
+    item["max_latency_ms"] = round(max(values), 2) if values else 0.0
+    item["latencies_ms"] = [round(value, 2) for value in values]
+
+
+def parse_latency_values_ms(text: str) -> list[float]:
+    values = []
+    for value, unit in re.findall(r"([0-9]+(?:\.[0-9]+)?)\s*(usec|ms)", text):
+        amount = float(value)
+        values.append(amount / 1000.0 if unit == "usec" else amount)
+    return values
+
+
+def latency_summary(report: dict) -> dict:
+    local_ms = float(report.get("local_pulse", {}).get("max_reported_ms", 0.0) or 0.0)
+    host_ms = float((report.get("host_pulse") or {}).get("max_reported_ms", 0.0) or 0.0)
+    snap_ms = float(report.get("configured_ms", {}).get("snapcast_buffer") or 0.0)
+    capture = report.get("capture", {})
+    mode = capture.get("mode")
+    if host_ms >= 500 and mode == "haos_pulse_bridge":
+        likely = "host_pulse_capture_buffer"
+        detail = "HAOS PulseAudio is reporting a large capture/source-output latency before the add-on receives the microphone."
+    elif local_ms >= 500:
+        likely = "addon_pulse_mixer_buffer"
+        detail = "The add-on PulseAudio mixer is reporting a large local buffer."
+    elif snap_ms >= 500:
+        likely = "snapcast_transport_buffer"
+        detail = "Snapcast is configured with a large transport buffer."
+    elif mode == "haos_pulse_bridge":
+        likely = "host_pulse_or_wireless_mic_path"
+        detail = "The add-on buffers are low; remaining delay is likely in HAOS PulseAudio or the wireless mic receiver path."
+    else:
+        likely = "outside_addon_capture_pipeline"
+        detail = "The add-on capture/mixer/Snapcast buffers are low; remaining delay is likely downstream or in the microphone hardware."
+    return {
+        "likely_cause": likely,
+        "detail": detail,
+        "max_local_pulse_ms": round(local_ms, 2),
+        "max_host_pulse_ms": round(host_ms, 2),
+        "configured_snapcast_buffer_ms": snap_ms,
+    }
 
 
 def concise_error(prefix: str, errors: list[str]) -> str:
