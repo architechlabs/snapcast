@@ -662,15 +662,11 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const liveUrl = apiUrl("/api/live.opus");
-      $("liveUrl").textContent = liveUrl;
-      if ($("livePreview").src !== new URL(liveUrl, window.location.href).href) {
-        $("livePreview").src = liveUrl;
-      }
-      const transportActive = ["mixing_music", "mixing_music_no_output_players"].includes(bridge.state) && (!bridge.ma_stream_state || bridge.ma_stream_state === "playing");
-      if (!transportActive && !$("livePreview").paused) {
-        $("livePreview").pause();
-        $("livePreview").load();
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.opus`;
+      const previewUrl = apiUrl("/api/live.opus");
+      $("liveUrl").textContent = permanentLiveUrl;
+      if ($("livePreview").src !== new URL(previewUrl, window.location.href).href) {
+        $("livePreview").src = previewUrl;
       }
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];

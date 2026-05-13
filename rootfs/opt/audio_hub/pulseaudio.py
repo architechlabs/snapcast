@@ -203,23 +203,52 @@ class PulseAudioManager:
         candidates = capture_device_candidates(device, devices)
         self.wired_attempted_devices = candidates
         errors = []
+        backend = self.config["wired"].get("capture_backend", "auto")
+        capture_latency = int(self.config["wired"].get("latency_ms", min(latency, 20)))
 
-        if await self._start_host_pulse_bridge(devices):
+        if backend in ("auto", "direct_alsa"):
+            for candidate in candidates:
+                if await self._start_ffmpeg_alsa_bridge(candidate):
+                    self.wired_source_loaded = True
+                    self.wired_device = candidate
+                    self.wired_capture_mode = "ffmpeg_alsa_bridge"
+                    self.wired_busy = False
+                    return
+                if self.wired_error:
+                    errors.append(f"{candidate}: {self.wired_error}")
+
+        if backend == "direct_alsa":
+            self.wired_busy = any(is_busy_error(error) for error in errors)
+            self.wired_capture_mode = "busy" if self.wired_busy else "none"
+            self.wired_error = concise_error("Direct ALSA capture could not be attached.", errors) if errors else "Direct ALSA capture did not start."
+            LOG.warning("%s", self.wired_error)
+            return
+
+        if backend in ("auto", "haos_pulse") and await self._start_host_pulse_bridge(devices, capture_latency):
             self.wired_source_loaded = True
             self.wired_device = "haos_pulse_source"
             self.wired_capture_mode = "haos_pulse_bridge"
             self.wired_busy = False
             return
 
-        for candidate in candidates:
-            if await self._start_ffmpeg_alsa_bridge(candidate):
-                self.wired_source_loaded = True
-                self.wired_device = candidate
-                self.wired_capture_mode = "ffmpeg_alsa_bridge"
-                self.wired_busy = False
-                return
-            if self.wired_error:
-                errors.append(f"{candidate}: {self.wired_error}")
+        if backend == "haos_pulse":
+            self.wired_error = self.wired_error or self.host_pulse_error or "HAOS PulseAudio capture bridge did not start."
+            LOG.warning("%s", self.wired_error)
+            return
+
+        if backend == "auto" and not errors:
+            for candidate in candidates:
+                if await self._start_ffmpeg_alsa_bridge(candidate):
+                    self.wired_source_loaded = True
+                    self.wired_device = candidate
+                    self.wired_capture_mode = "ffmpeg_alsa_bridge"
+                    self.wired_busy = False
+                    return
+                if self.wired_error:
+                    errors.append(f"{candidate}: {self.wired_error}")
+
+        if backend == "auto" and not self.wired_source_loaded and self.host_pulse_error:
+            errors.append(f"haos_pulse: {self.host_pulse_error}")
 
         busy_errors = [error for error in errors if is_busy_error(error)]
         if busy_errors:
@@ -350,7 +379,7 @@ class PulseAudioManager:
         LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
         return True
 
-    async def _start_host_pulse_bridge(self, devices: dict) -> bool:
+    async def _start_host_pulse_bridge(self, devices: dict, latency_ms: int) -> bool:
         host_env = await self._host_pulse_env()
         if not host_env:
             return False
@@ -361,7 +390,7 @@ class PulseAudioManager:
         cfg = self.config
         bridge = ManagedProcess(
             "host-pulse-capture-bridge",
-            ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"], cfg["audio"]["latency_ms"])],
+            ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"], latency_ms)],
             env=PULSE_ENV,
             quiet_substrings=["Failed to create secure directory"],
         )
@@ -794,7 +823,7 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     source_arg = shlex.quote(source)
     cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else " PULSE_COOKIE="
     runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else " PULSE_RUNTIME_PATH="
-    latency = max(25, min(60, int(latency_ms)))
+    latency = max(10, min(30, int(latency_ms)))
     return (
         f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
         f"parec -d {source_arg} --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "

@@ -105,7 +105,7 @@ class AudioHub:
                     await self.snapcast.ensure_music_assistant_bridge()
             except Exception:
                 LOG.exception("Music Assistant Snapcast bridge loop failed")
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
 
     async def ensure_processes(self) -> None:
         if self.restart_lock.locked():

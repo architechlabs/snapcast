@@ -1,7 +1,7 @@
 name: Snapcast Audio Hub
 slug: snapcast_audio_hub
 description: Self-contained wired/wireless audio input mixer and Snapcast server for HAOS on Raspberry Pi
-version: 1.1.7
+version: 1.1.8
 url: https://local.addons/snapcast-audio-hub
 arch:
   - aarch64
@@ -60,6 +60,8 @@ options:
     enabled: true
     device: auto
     profile: line_in
+    capture_backend: auto
+    latency_ms: 15
     volume: 0.9
     mute: false
   network:
@@ -116,6 +118,8 @@ schema:
     enabled: bool
     device: str
     profile: list(line_in|mic|aux)
+    capture_backend: list(auto|direct_alsa|haos_pulse)
+    latency_ms: int(8,80)
     volume: float(0,2)
     mute: bool
   network:

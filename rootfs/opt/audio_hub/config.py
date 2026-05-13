@@ -27,6 +27,8 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "device": "auto",
         "profile": "line_in",
+        "capture_backend": "auto",
+        "latency_ms": 15,
         "volume": 0.9,
         "mute": False,
     },
@@ -102,6 +104,10 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     config["audio"]["buffer_ms"] = int(config["audio"]["buffer_ms"])
     config["audio"]["keepalive_silence"] = bool(config["audio"].get("keepalive_silence", False))
     config["wired"]["volume"] = clamp(float(config["wired"]["volume"]), 0.0, 2.0)
+    config["wired"]["latency_ms"] = int(config["wired"].get("latency_ms", 15))
+    config["wired"]["latency_ms"] = max(8, min(config["wired"]["latency_ms"], 80))
+    if config["wired"].get("capture_backend") not in ("auto", "direct_alsa", "haos_pulse"):
+        config["wired"]["capture_backend"] = "auto"
     config["network"]["volume"] = clamp(float(config["network"]["volume"]), 0.0, 2.0)
     config["wireless"]["volume"] = clamp(float(config["wireless"]["volume"]), 0.0, 2.0)
     config["music_assistant"]["music_volume"] = clamp(float(config["music_assistant"].get("music_volume", 0.85)), 0.0, 2.0)

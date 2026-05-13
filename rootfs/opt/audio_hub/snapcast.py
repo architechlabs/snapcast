@@ -20,6 +20,8 @@ class SnapcastManager:
         self.bridge_lock = asyncio.Lock()
         self.tap_retry_after = 0.0
         self.tap_error = ""
+        self.ma_idle_since = 0.0
+        self.music_loopback_muted = False
         self.bridge_status: dict = {
             "enabled": bool(config.get("music_assistant", {}).get("enabled", True)),
             "state": "stopped",
@@ -83,6 +85,7 @@ class SnapcastManager:
             "(StreamServer) StreamServer::NewConnection:",
             "(StreamSessionTCP) unknown message type received:",
             "(StreamServer) onDisconnect:",
+            '"data":"Stream not found"',
         ]
         self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH), "--server.mdns=false"], quiet_substrings=quiet)
         await self.process.start()
@@ -206,6 +209,7 @@ class SnapcastManager:
             await self.set_group_stream(group_id(tap_group), ma_stream)
             await asyncio.sleep(0.15)
         await self.ensure_tap_audio()
+        await self.sync_music_loopback_state(ma_stream_state)
         await self.apply_music_volume()
         tap_group_has_speakers = group_has_clients_other_than(tap_group, client_id(tap_client))
 
@@ -342,6 +346,30 @@ class SnapcastManager:
     async def apply_music_volume(self) -> None:
         volume = self.config.get("music_assistant", {}).get("music_volume", 0.85)
         percent = f"{max(0, min(200, int(float(volume) * 100)))}%"
+        if self.music_loopback_muted:
+            return
+        await self._for_music_sink_inputs(lambda sink_input: run_checked(["pactl", "set-sink-input-volume", sink_input, percent], timeout=5, env=PULSE_ENV))
+
+    async def sync_music_loopback_state(self, ma_stream_state: str | None) -> None:
+        now = asyncio.get_running_loop().time()
+        if ma_stream_state == "playing":
+            self.ma_idle_since = 0.0
+            await self.set_music_loopback_muted(False)
+            return
+        if not ma_stream_state:
+            return
+        if self.ma_idle_since == 0.0:
+            self.ma_idle_since = now
+            return
+        if now - self.ma_idle_since >= 0.75:
+            await self.set_music_loopback_muted(True)
+
+    async def set_music_loopback_muted(self, muted: bool) -> None:
+        value = "1" if muted else "0"
+        await self._for_music_sink_inputs(lambda sink_input: run_checked(["pactl", "set-sink-input-mute", sink_input, value], timeout=5, env=PULSE_ENV))
+        self.music_loopback_muted = muted
+
+    async def _for_music_sink_inputs(self, action) -> None:
         rc, out = await run_checked(["pactl", "list", "sink-inputs"], timeout=5, env=PULSE_ENV)
         if rc != 0:
             return
@@ -351,13 +379,13 @@ class SnapcastManager:
             stripped = line.strip()
             if stripped.startswith("Sink Input #"):
                 if current is not None and matched:
-                    await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
+                    await action(current)
                 current = stripped.replace("Sink Input #", "").strip()
                 matched = False
             elif "application.name" in stripped:
-                matched = "ma_music_tap" in stripped or "ma_snapcast_tap" in stripped
+                matched = "ma_music_tap" in stripped
         if current is not None and matched:
-            await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
+            await action(current)
 
     async def disable_tap_audio(self) -> None:
         if self.tap_loopback_module:

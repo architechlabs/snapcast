@@ -54,9 +54,6 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return await live_encoded_stream(request, "opus")
 
     async def live_encoded_stream(request, codec: str):
-        gated = request.query.get("free") not in ("1", "true", "yes")
-        if gated and not await live_transport_active():
-            return web.Response(status=204, headers={"Cache-Control": "no-store"})
         response = web.StreamResponse(
             status=200,
             headers={
@@ -74,16 +71,10 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             env=PULSE_ENV,
         )
         try:
-            checked_at = asyncio.get_running_loop().time()
             while proc.stdout:
                 chunk = await proc.stdout.read(2048 if codec == "opus" else 8192)
                 if not chunk:
                     break
-                now = asyncio.get_running_loop().time()
-                if gated and now - checked_at >= 1.0:
-                    checked_at = now
-                    if not await live_transport_active():
-                        break
                 await response.write(chunk)
         except (ConnectionResetError, asyncio.CancelledError):
             pass
@@ -96,23 +87,6 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
                     proc.kill()
                     await proc.wait()
         return response
-
-    async def live_transport_active() -> bool:
-        try:
-            status_data = await status_provider()
-        except Exception:
-            return True
-        config = status_data.get("config", {})
-        bridge = status_data.get("snapcast_bridge", {})
-        if not bool(config.get("music_assistant", {}).get("enabled", True)):
-            return True
-        state = bridge.get("state")
-        ma_state = bridge.get("ma_stream_state")
-        if state in ("tap_connecting", "tap_retry_wait", "disabled", "snapserver_unavailable", "waiting_for_music"):
-            return False
-        if ma_state and ma_state != "playing":
-            return False
-        return bool(bridge.get("ma_stream"))
 
     def live_encoder_command(codec: str) -> list[str]:
         base = [
@@ -178,6 +152,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_get("/api/live.opus", live_opus_stream)
     app.router.add_get("/{prefix:.+}/api/live.opus", live_opus_stream)
+    app.router.add_get("/live.mp3", live_stream)
+    app.router.add_get("/live.opus", live_opus_stream)
     app.router.add_post("/api/snapcast/action", snapcast_action)
     app.router.add_post("/{prefix:.+}/api/snapcast/action", snapcast_action)
     app.router.add_patch("/api/config", patch_config)
