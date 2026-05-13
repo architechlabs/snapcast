@@ -301,6 +301,14 @@ class SnapcastManager:
                 "(Player) Sampleformat:",
                 "(PulsePlayer) Setting property",
                 "(PulsePlayer) Using buffer_time:",
+                "(Stream) Exception: Not enough frames available",
+                "(Stream) outputBufferDacTime > bufferMs",
+                "(PulsePlayer) undeflow",
+                "(PulsePlayer) underflow",
+                "(PulsePlayer) latency increased",
+                "(PulsePlayer) No chunk received for 5000ms",
+                "(PulsePlayer) Chunk available, reconnecting to pulse",
+                "pBuffer->full()",
             ],
         )
         await self.tap_process.start()
@@ -365,6 +373,12 @@ class SnapcastManager:
     async def set_group_stream(self, group: str | None, stream: str | None) -> dict:
         if not group or not stream:
             return {"ok": False, "error": "missing group or stream"}
+        if str(stream).lower() in ("default", "none", "null"):
+            return {"ok": False, "error": f"refusing invalid Snapcast stream {stream}"}
+        status = await self.server_status()
+        server = extract_server(status)
+        if server and not find_stream(server, stream):
+            return {"ok": False, "error": f"Snapcast stream not found: {stream}"}
         return await self.rpc("Group.SetStream", {"id": group, "stream_id": stream})
 
     async def set_group_mute(self, group: str | None, muted: bool) -> dict:
@@ -438,6 +452,8 @@ def find_music_assistant_stream(server: dict, prefix: str, final_stream: str | N
     for stream in server.get("streams", []):
         stream_id = str(stream.get("id") or stream.get("name") or "")
         if stream_id == final_stream:
+            continue
+        if stream_id.lower() in ("default", "none", "null"):
             continue
         stream_key_value = stream_key(stream_id)
         if stream_key_value.startswith(prefix_key) or prefix_key in stream_key_value:

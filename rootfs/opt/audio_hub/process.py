@@ -95,8 +95,15 @@ async def run_checked(command: Sequence[str], timeout: int = 10, env: dict[str, 
     try:
         output, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+        try:
+            await proc.wait()
+        except ProcessLookupError:
+            pass
         return 124, "timeout"
     return proc.returncode or 0, output.decode(errors="replace")
 

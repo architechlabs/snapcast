@@ -51,6 +51,9 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
 
 def infer_active_source(config: dict, bridge_status: dict | None = None) -> str:
     bridge_state = (bridge_status or {}).get("state")
+    ma_state = (bridge_status or {}).get("ma_stream_state")
+    if ma_state and ma_state != "playing":
+        return "wired" if config["wired"]["enabled"] else "idle"
     if bridge_state in ("mixing_music", "mixing_music_no_output_players"):
         if config["wired"]["enabled"] and config.get("music_assistant", {}).get("mic_injection_enabled", True):
             return "ma_music+wired"
