@@ -133,6 +133,7 @@ class PulseAudioManager:
 
     async def _start_silence_keepalive(self, rate: int, channels: int) -> None:
         layout = "mono" if channels == 1 else "stereo"
+        pulse_args = low_latency_pulse_output_args("silence_keepalive", rate, channels, 5)
         silence = ManagedProcess(
             "silence-keepalive",
             [
@@ -140,15 +141,19 @@ class PulseAudioManager:
                 "-hide_banner",
                 "-loglevel",
                 "error",
+                "-re",
                 "-f",
                 "lavfi",
                 "-i",
                 f"anullsrc=channel_layout={layout}:sample_rate={rate}",
-                "-f",
-                "pulse",
+                "-ar",
+                str(rate),
+                "-ac",
+                str(channels),
+                *pulse_args,
                 "snap_hub_mix",
             ],
-            env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=silence_keepalive"},
+            env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=silence_keepalive", "PULSE_LATENCY_MSEC": "5"},
         )
         self.processes["silence-keepalive"] = silence
         await silence.start()
@@ -1038,6 +1043,8 @@ def low_latency_pulse_output_args(stream_name: str, rate: int, channels: int, la
         "pulse",
         "-server",
         PULSE_ENV["PULSE_SERVER"],
+        "-name",
+        stream_name,
         "-stream_name",
         stream_name,
         "-fragment_size",
@@ -1085,6 +1092,9 @@ def parse_pactl_latency_items(text: str) -> list[dict]:
         if stripped.startswith("Name:") or stripped.startswith("Description:") or stripped.startswith("Driver:"):
             key, value = stripped.split(":", 1)
             current[key.lower()] = value.strip()
+        elif stripped.startswith("Sink:") or stripped.startswith("Source:"):
+            key, value = stripped.split(":", 1)
+            current[key.lower()] = value.strip()
         elif "application.name" in stripped or "device.description" in stripped or "media.role" in stripped:
             parts = stripped.split("=", 1)
             if len(parts) == 2:
@@ -1112,7 +1122,10 @@ def parse_latency_values_ms(text: str) -> list[float]:
 
 
 def latency_summary(report: dict) -> dict:
-    local_ms = float(report.get("local_pulse", {}).get("max_reported_ms", 0.0) or 0.0)
+    local_snapshot = report.get("local_pulse", {})
+    raw_local_ms = float(local_snapshot.get("max_reported_ms", 0.0) or 0.0)
+    final_mix_ms = final_mix_latency_ms(local_snapshot)
+    local_ms = final_mix_ms if final_mix_ms is not None else raw_local_ms
     host_ms = float((report.get("host_pulse") or {}).get("max_reported_ms", 0.0) or 0.0)
     snap_ms = float(report.get("configured_ms", {}).get("snapcast_buffer") or 0.0)
     capture = report.get("capture", {})
@@ -1122,7 +1135,7 @@ def latency_summary(report: dict) -> dict:
         detail = "HAOS PulseAudio is reporting a large capture/source-output latency before the add-on receives the microphone."
     elif local_ms >= 500:
         likely = "addon_pulse_mixer_buffer"
-        detail = "The add-on PulseAudio mixer is reporting a large local buffer."
+        detail = "The final AudioHub mix path is reporting a large local PulseAudio buffer."
     elif snap_ms >= 500:
         likely = "snapcast_transport_buffer"
         detail = "Snapcast is configured with a large transport buffer."
@@ -1135,10 +1148,33 @@ def latency_summary(report: dict) -> dict:
     return {
         "likely_cause": likely,
         "detail": detail,
-        "max_local_pulse_ms": round(local_ms, 2),
+        "max_local_pulse_ms": round(raw_local_ms, 2),
+        "final_mix_pulse_ms": round(local_ms, 2),
         "max_host_pulse_ms": round(host_ms, 2),
         "configured_snapcast_buffer_ms": snap_ms,
     }
+
+
+def final_mix_latency_ms(snapshot: dict) -> float | None:
+    if not snapshot.get("available"):
+        return None
+    sections = snapshot.get("sections", {})
+    sinks = sections.get("sinks") if isinstance(sections.get("sinks"), list) else []
+    sources = sections.get("sources") if isinstance(sections.get("sources"), list) else []
+    sink_inputs = sections.get("sink-inputs") if isinstance(sections.get("sink-inputs"), list) else []
+    snap_sink_ids = {item.get("id") for item in sinks if item.get("name") == "snap_hub_mix"}
+    values = []
+    for item in sinks:
+        if item.get("name") == "snap_hub_mix":
+            values.append(item.get("max_latency_ms", 0.0))
+    for item in sources:
+        if item.get("name") == "snap_hub_mix.monitor":
+            values.append(item.get("max_latency_ms", 0.0))
+    for item in sink_inputs:
+        app_name = item.get("properties", {}).get("application.name", "")
+        if item.get("sink") in snap_sink_ids and app_name != "silence_keepalive":
+            values.append(item.get("max_latency_ms", 0.0))
+    return max(values) if values else None
 
 
 def concise_error(prefix: str, errors: list[str]) -> str:

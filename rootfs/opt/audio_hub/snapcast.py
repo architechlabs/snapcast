@@ -314,6 +314,8 @@ class SnapcastManager:
             "ma_music_tap",
             "--sampleformat",
             f"{self.config['audio']['sample_rate']}:16:*",
+            "--latency",
+            "0",
         ]
         self.tap_process = ManagedProcess(
             "ma-snapcast-tap",
@@ -368,8 +370,10 @@ class SnapcastManager:
             "module-loopback",
             "source=ma_music_tap.monitor",
             "sink=snap_hub_mix",
-            f"latency_msec={max(5, min(20, int(self.config['audio']['latency_ms'])))}",
-            "sink_input_properties=application.name=ma_music_tap",
+            "latency_msec=5",
+            "adjust_time=0",
+            "source_output_properties=application.name=ma_music_tap_source",
+            "sink_input_properties=application.name=ma_music_tap media.role=music",
         ]
         rc, out = await run_checked(["pactl", *args], timeout=5, env=PULSE_ENV)
         if rc == 0 and out.strip().isdigit():
