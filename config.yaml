@@ -1,7 +1,7 @@
 name: Snapcast Audio Hub
 slug: snapcast_audio_hub
 description: Self-contained wired/wireless audio input mixer and Snapcast server for HAOS on Raspberry Pi
-version: 1.1.4
+version: 1.1.5
 url: https://local.addons/snapcast-audio-hub
 arch:
   - aarch64
@@ -52,8 +52,8 @@ options:
     sample_rate: 48000
     channels: 2
     format: s16le
-    latency_ms: 120
-    buffer_ms: 400
+    latency_ms: 50
+    buffer_ms: 250
     routing_mode: mix
   wired:
     enabled: true
@@ -78,7 +78,8 @@ options:
     jsonrpc_port: 41705
     http_port: 41780
     codec: pcm
-    buffer_ms: 1000
+    buffer_ms: 300
+    chunk_ms: 10
   music_assistant:
     enabled: true
     stream_prefix: MusicAssistant
@@ -89,6 +90,7 @@ options:
     mic_injection_enabled: true
     ducking_enabled: false
     ducking_level: 0.35
+    low_latency_mode: true
   entities:
     mqtt_enabled: true
     mqtt_discovery_prefix: homeassistant
@@ -105,7 +107,7 @@ schema:
     sample_rate: int(8000,192000)
     channels: int(1,2)
     format: list(s16le|s24le|s32le|float32le)
-    latency_ms: int(40,1000)
+    latency_ms: int(20,1000)
     buffer_ms: int(100,5000)
     routing_mode: list(mix|wired_only|network_only|bluetooth_only|fallback_duck|source_switch)
   wired:
@@ -132,6 +134,7 @@ schema:
     http_port: port
     codec: list(pcm|flac|ogg|opus)
     buffer_ms: int(100,5000)
+    chunk_ms: int(5,100)
   music_assistant:
     enabled: bool
     stream_prefix: str
@@ -142,6 +145,7 @@ schema:
     mic_injection_enabled: bool
     ducking_enabled: bool
     ducking_level: float(0,1)
+    low_latency_mode: bool
   entities:
     mqtt_enabled: bool
     mqtt_discovery_prefix: str

@@ -48,6 +48,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return web.Response(body=clip, content_type="audio/wav")
 
     async def live_stream(request):
+        if request.query.get("free") not in ("1", "true", "yes") and not await live_transport_active():
+            return web.Response(status=204, headers={"Cache-Control": "no-store"})
         response = web.StreamResponse(
             status=200,
             headers={
@@ -82,10 +84,16 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             env=PULSE_ENV,
         )
         try:
+            checked_at = asyncio.get_running_loop().time()
             while proc.stdout:
                 chunk = await proc.stdout.read(8192)
                 if not chunk:
                     break
+                now = asyncio.get_running_loop().time()
+                if request.query.get("free") not in ("1", "true", "yes") and now - checked_at >= 2.0:
+                    checked_at = now
+                    if not await live_transport_active():
+                        break
                 await response.write(chunk)
         except (ConnectionResetError, asyncio.CancelledError):
             pass
@@ -98,6 +106,24 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
                     proc.kill()
                     await proc.wait()
         return response
+
+    async def live_transport_active() -> bool:
+        try:
+            status_data = await status_provider()
+        except Exception:
+            return True
+        config = status_data.get("config", {})
+        bridge = status_data.get("snapcast_bridge", {})
+        ma_enabled = bool(config.get("music_assistant", {}).get("enabled", True))
+        if not ma_enabled:
+            return True
+        bridge_state = bridge.get("state")
+        ma_state = bridge.get("ma_stream_state")
+        if bridge_state in ("waiting_for_music", "tap_connecting", "tap_retry_wait", "disabled", "snapserver_unavailable"):
+            return False
+        if ma_state and ma_state != "playing":
+            return False
+        return True
 
     async def snapcast_action(request):
         payload = await request.json()

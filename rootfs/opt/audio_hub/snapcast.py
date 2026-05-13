@@ -42,6 +42,7 @@ class SnapcastManager:
             f"&mode=read"
             f"&sampleformat={cfg['audio']['sample_rate']}:{bits_from_format(cfg['audio']['format'])}:{cfg['audio']['channels']}"
             f"&codec={cfg['snapcast']['codec']}"
+            f"&chunk_ms={cfg['snapcast'].get('chunk_ms', 10)}"
         )
         CONFIG_PATH.write_text(
             "\n".join([
@@ -135,6 +136,8 @@ class SnapcastManager:
 
         final_stream = find_stream(server, self.config["snapcast"]["stream_name"])
         ma_stream = find_music_assistant_stream(server, ma_cfg.get("stream_prefix", "MusicAssistant"), final_stream)
+        ma_stream_state = stream_state(server, ma_stream)
+        final_stream_state = stream_state(server, final_stream)
         tap_started = await self.ensure_tap_process()
         await asyncio.sleep(0.25)
         status = await self.server_status()
@@ -151,7 +154,9 @@ class SnapcastManager:
                 "enabled": True,
                 "state": "tap_retry_wait",
                 "ma_stream": ma_stream,
+                "ma_stream_state": ma_stream_state,
                 "final_stream": final_stream,
+                "final_stream_state": final_stream_state,
                 "tap_client": client_id(tap_client),
                 "tap_group": group_id(find_group_for_client(server, tap_client)),
                 "user_client_count": user_client_count,
@@ -166,7 +171,9 @@ class SnapcastManager:
                 "enabled": True,
                 "state": "waiting_for_snapcast_players" if user_client_count == 0 else "waiting_for_music",
                 "ma_stream": None,
+                "ma_stream_state": None,
                 "final_stream": final_stream,
+                "final_stream_state": final_stream_state,
                 "tap_client": client_id(tap_client),
                 "tap_group": group_id(find_group_for_client(server, tap_client)),
                 "user_client_count": user_client_count,
@@ -183,7 +190,9 @@ class SnapcastManager:
                 "enabled": True,
                 "state": "tap_connecting",
                 "ma_stream": ma_stream,
+                "ma_stream_state": ma_stream_state,
                 "final_stream": final_stream,
+                "final_stream_state": final_stream_state,
                 "tap_client": None,
                 "tap_group": None,
                 "user_client_count": user_client_count,
@@ -196,6 +205,23 @@ class SnapcastManager:
         if group_stream(tap_group) != ma_stream:
             await self.set_group_stream(group_id(tap_group), ma_stream)
             await asyncio.sleep(0.15)
+        if ma_stream_state and ma_stream_state != "playing":
+            await self.disable_tap_audio()
+            self.bridge_status = {
+                "enabled": True,
+                "state": "waiting_for_music",
+                "ma_stream": ma_stream,
+                "ma_stream_state": ma_stream_state,
+                "final_stream": final_stream,
+                "final_stream_state": final_stream_state,
+                "tap_client": client_id(tap_client),
+                "tap_group": group_id(tap_group),
+                "user_client_count": user_client_count,
+                "groups": groups,
+                "clients": clients,
+                "error": "",
+            }
+            return self.bridge_status
         await self.ensure_tap_audio()
         await self.apply_music_volume()
         tap_group_has_speakers = group_has_clients_other_than(tap_group, client_id(tap_client))
@@ -217,12 +243,16 @@ class SnapcastManager:
         groups = summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
         clients = summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
         user_client_count = sum(1 for client in clients if not client.get("internal_tap"))
+        ma_stream_state = stream_state(server, ma_stream)
+        final_stream_state = stream_state(server, final_stream)
 
         self.bridge_status = {
             "enabled": True,
             "state": "mixing_music_no_output_players" if user_client_count == 0 else "mixing_music",
             "ma_stream": ma_stream,
+            "ma_stream_state": ma_stream_state,
             "final_stream": final_stream,
+            "final_stream_state": final_stream_state,
             "tap_client": client_id(tap_client),
             "tap_group": group_id(tap_group),
             "user_client_count": user_client_count,
@@ -396,6 +426,29 @@ def find_stream(server: dict, wanted: str | None) -> str | None:
     return None
 
 
+def find_stream_info(server: dict, wanted: str | None) -> dict | None:
+    if not wanted:
+        return None
+    wanted_lower = wanted.lower()
+    for stream in server.get("streams", []):
+        stream_id = str(stream.get("id") or stream.get("name") or "")
+        if stream_id.lower() == wanted_lower:
+            return stream
+    return None
+
+
+def stream_state(server: dict, stream_id: str | None) -> str | None:
+    stream = find_stream_info(server, stream_id)
+    if not stream:
+        return None
+    status = stream.get("status")
+    if isinstance(status, dict):
+        value = status.get("state") or status.get("name") or status.get("status")
+    else:
+        value = status or stream.get("state")
+    return str(value or "").lower() or None
+
+
 def find_music_assistant_stream(server: dict, prefix: str, final_stream: str | None) -> str | None:
     prefix_key = stream_key(prefix or "MusicAssistant")
     candidates = []
@@ -406,7 +459,8 @@ def find_music_assistant_stream(server: dict, prefix: str, final_stream: str | N
         stream_key_value = stream_key(stream_id)
         if stream_key_value.startswith(prefix_key) or prefix_key in stream_key_value:
             candidates.append(stream_id)
-    return candidates[-1] if candidates else None
+    playing = [stream_id for stream_id in candidates if stream_state(server, stream_id) == "playing"]
+    return (playing[-1] if playing else candidates[-1]) if candidates else None
 
 
 def stream_key(value: str) -> str:

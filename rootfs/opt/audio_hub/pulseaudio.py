@@ -118,7 +118,7 @@ class PulseAudioManager:
             [
                 "bash",
                 "-lc",
-                f"exec parec -d snap_hub_mix.monitor --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
+                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(20, min(80, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
             ],
             env=PULSE_ENV,
         )
@@ -317,10 +317,12 @@ class PulseAudioManager:
                 "-hide_banner",
                 "-loglevel",
                 "warning",
+                "-fflags",
+                "nobuffer",
                 "-f",
                 "alsa",
                 "-thread_queue_size",
-                "1024",
+                "128",
                 "-i",
                 device,
                 "-ar",
@@ -358,7 +360,7 @@ class PulseAudioManager:
         cfg = self.config
         bridge = ManagedProcess(
             "host-pulse-capture-bridge",
-            ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"])],
+            ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"], cfg["audio"]["latency_ms"])],
             env=PULSE_ENV,
             quiet_substrings=["Failed to create secure directory"],
         )
@@ -783,7 +785,7 @@ def host_pulse_match_tokens(devices: dict) -> list[str]:
     return tokens
 
 
-def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, channels: int, audio_format: str) -> str:
+def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, channels: int, audio_format: str, latency_ms: int) -> str:
     host_server = shlex.quote(host_env.get("PULSE_SERVER", ""))
     host_cookie = shlex.quote(host_env.get("PULSE_COOKIE", ""))
     host_runtime = shlex.quote(host_env.get("PULSE_RUNTIME_PATH", ""))
@@ -791,11 +793,12 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     source_arg = shlex.quote(source)
     cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else " PULSE_COOKIE="
     runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else " PULSE_RUNTIME_PATH="
+    latency = max(20, min(80, int(latency_ms)))
     return (
         f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
-        f"parec -d {source_arg} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
+        f"parec -d {source_arg} --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
         f"| PULSE_SERVER={local_server} PULSE_PROP='media.role=phone application.name=host_pulse_bridge' "
-        f"pacat --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} -d snap_hub_mix"
+        f"pacat --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} -d snap_hub_mix"
     )
 
 
