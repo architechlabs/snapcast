@@ -180,6 +180,23 @@
       overflow-wrap: anywhere;
     }
 
+    .copyline {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .copyline code {
+      min-width: 0;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: #0f1417;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
     .panel {
       min-width: 0;
       padding: 15px;
@@ -444,6 +461,10 @@
       <article class="panel">
         <h2>Players / Groups</h2>
         <div id="playerList" class="player-list"></div>
+        <div class="copyline">
+          <code id="liveUrl">Loading live URL...</code>
+          <button id="copyLiveUrl" class="secondary">Copy</button>
+        </div>
       </article>
     </section>
 
@@ -640,6 +661,7 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
+      $("liveUrl").textContent = `${window.location.protocol}//${window.location.hostname}:41888/api/live.mp3`;
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
       const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
@@ -783,6 +805,11 @@
       if (!button) return;
       await api("/api/snapcast/action", { method: "POST", body: JSON.stringify({ action: button.dataset.action, group_id: button.dataset.group }) });
       await refresh();
+    });
+    $("copyLiveUrl").addEventListener("click", async () => {
+      await navigator.clipboard.writeText($("liveUrl").textContent);
+      $("copyLiveUrl").textContent = "Copied";
+      setTimeout(() => $("copyLiveUrl").textContent = "Copy", 1200);
     });
 
     refresh();

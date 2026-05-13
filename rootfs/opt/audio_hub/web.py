@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
+import asyncio
 from pathlib import Path
 from typing import Awaitable, Callable, Any
 
 from aiohttp import web
+
+from pulseaudio import PULSE_ENV
 
 StatusProvider = Callable[[], Awaitable[dict[str, Any]]]
 PatchHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -44,6 +47,58 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         clip = await monitor_clip_handler()
         return web.Response(body=clip, content_type="audio/wav")
 
+    async def live_stream(request):
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "audio/mpeg",
+                "Cache-Control": "no-store",
+                "Connection": "keep-alive",
+            },
+        )
+        await response.prepare(request)
+        proc = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "pulse",
+            "-i",
+            "snap_hub_mix.monitor",
+            "-ac",
+            "2",
+            "-ar",
+            "48000",
+            "-codec:a",
+            "libmp3lame",
+            "-b:a",
+            "192k",
+            "-f",
+            "mp3",
+            "-",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env=PULSE_ENV,
+        )
+        try:
+            while proc.stdout:
+                chunk = await proc.stdout.read(8192)
+                if not chunk:
+                    break
+                await response.write(chunk)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+        return response
+
     async def snapcast_action(request):
         payload = await request.json()
         return web.json_response(await snapcast_action_handler(payload))
@@ -55,6 +110,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/input-level", input_level)
     app.router.add_get("/api/monitor.wav", monitor_clip)
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
+    app.router.add_get("/api/live.mp3", live_stream)
+    app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_post("/api/snapcast/action", snapcast_action)
     app.router.add_post("/{prefix:.+}/api/snapcast/action", snapcast_action)
     app.router.add_patch("/api/config", patch_config)

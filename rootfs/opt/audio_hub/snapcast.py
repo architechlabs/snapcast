@@ -73,6 +73,7 @@ class SnapcastManager:
         quiet = [
             "(Avahi) Failed to create client",
             "(AsioStream) No data since",
+            "(AsioStream) Error reading message: End of file",
             "(Server) onResync",
             "(ControlServer) New connection from:",
             "(ControlServer) Removing",
@@ -259,7 +260,20 @@ class SnapcastManager:
             "ma-snapcast-tap",
             command,
             env={**PULSE_ENV, "PULSE_PROP": "media.role=music application.name=ma_snapcast_tap"},
-            quiet_substrings=["daemon started", "metadata", "Options '--host' and '--port' are deprecated"],
+            quiet_substrings=[
+                "daemon started",
+                "metadata",
+                "Options '--host' and '--port' are deprecated",
+                "(Stream) abs(age > 500)",
+                "pShortBuffer->full()",
+                "pMiniBuffer->full()",
+                "(Controller) diff to server",
+                "(PulsePlayer) Stop",
+                "(PulsePlayer) Disconnecting from pulse",
+                "(PulsePlayer) Connecting to pulse",
+                "(PulsePlayer) Start",
+                "(Stream) No chunks available",
+            ],
         )
         await self.tap_process.start()
         await asyncio.sleep(0.35)
@@ -348,16 +362,20 @@ def find_stream(server: dict, wanted: str | None) -> str | None:
 
 
 def find_music_assistant_stream(server: dict, prefix: str, final_stream: str | None) -> str | None:
-    prefix = (prefix or "MusicAssistant").lower()
+    prefix_key = stream_key(prefix or "MusicAssistant")
     candidates = []
     for stream in server.get("streams", []):
         stream_id = str(stream.get("id") or stream.get("name") or "")
         if stream_id == final_stream:
             continue
-        lowered = stream_id.lower()
-        if lowered.startswith(prefix.lower()) or prefix in lowered:
+        stream_key_value = stream_key(stream_id)
+        if stream_key_value.startswith(prefix_key) or prefix_key in stream_key_value:
             candidates.append(stream_id)
     return candidates[-1] if candidates else None
+
+
+def stream_key(value: str) -> str:
+    return "".join(ch for ch in value.lower() if ch.isalnum())
 
 
 def find_tap_client(server: dict, tap_id: str) -> dict | None:
