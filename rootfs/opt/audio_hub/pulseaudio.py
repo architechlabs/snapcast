@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import struct
+import time
 from pathlib import Path
 
 from process import ManagedProcess, run_binary, run_checked
@@ -46,6 +47,10 @@ class PulseAudioManager:
         self.host_pulse_bridge_engine = ""
         self.wired_bridge_engine = ""
         self.last_input_level: dict | None = None
+        self.level_task: asyncio.Task | None = None
+        self.level_proc: asyncio.subprocess.Process | None = None
+        self.current_input_level: dict | None = None
+        self.current_input_level_at = 0.0
         self.host_pulse_source_suspended = False
 
     async def start(self, devices: dict) -> None:
@@ -130,6 +135,7 @@ class PulseAudioManager:
         )
         self.processes["parec"] = parec
         await parec.start()
+        await self._start_level_monitor()
 
     async def _start_silence_keepalive(self, rate: int, channels: int) -> None:
         layout = "mono" if channels == 1 else "stereo"
@@ -157,6 +163,64 @@ class PulseAudioManager:
         )
         self.processes["silence-keepalive"] = silence
         await silence.start()
+
+    async def _start_level_monitor(self) -> None:
+        if self.level_task and not self.level_task.done():
+            return
+        self.level_task = asyncio.create_task(self._level_monitor_loop())
+
+    async def _level_monitor_loop(self) -> None:
+        rate = 16000
+        chunk_bytes = 1600
+        while True:
+            proc = await asyncio.create_subprocess_exec(
+                "parec",
+                "-d",
+                "snap_hub_mix.monitor",
+                "--latency-msec=5",
+                "--process-time-msec=5",
+                "--raw",
+                "--format=s16le",
+                "--rate",
+                str(rate),
+                "--channels=1",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+                env={**PULSE_ENV, "PULSE_LATENCY_MSEC": "5"},
+            )
+            self.level_proc = proc
+            try:
+                while proc.stdout:
+                    raw = await proc.stdout.read(chunk_bytes)
+                    if not raw:
+                        break
+                    level, peak = pcm16_level(raw)
+                    result = {
+                        "ok": True,
+                        "state": signal_state(level, peak),
+                        "level": level,
+                        "peak": peak,
+                        "mode": self.wired_capture_mode,
+                        "stage": "realtime_mixer",
+                    }
+                    self.current_input_level = result
+                    self.current_input_level_at = time.monotonic()
+                    self.last_input_level = result
+            except asyncio.CancelledError:
+                if proc.returncode is None:
+                    proc.terminate()
+                raise
+            finally:
+                if proc.returncode is None:
+                    proc.terminate()
+                    try:
+                        await asyncio.wait_for(proc.wait(), timeout=2)
+                    except TimeoutError:
+                        proc.kill()
+                        await proc.wait()
+                if self.level_proc is proc:
+                    self.level_proc = None
+            await asyncio.sleep(0.2)
 
     async def _wait_ready(self) -> None:
         for _ in range(50):
@@ -717,6 +781,21 @@ class PulseAudioManager:
             await run_checked(["pactl", "set-sink-input-volume", current, percent], timeout=5, env=PULSE_ENV)
 
     async def stop(self) -> None:
+        if self.level_task:
+            self.level_task.cancel()
+            try:
+                await self.level_task
+            except asyncio.CancelledError:
+                pass
+            self.level_task = None
+        if self.level_proc and self.level_proc.returncode is None:
+            self.level_proc.terminate()
+            try:
+                await asyncio.wait_for(self.level_proc.wait(), timeout=2)
+            except TimeoutError:
+                self.level_proc.kill()
+                await self.level_proc.wait()
+            self.level_proc = None
         if self.host_pulse_source_suspended and self.host_pulse_env and self.host_pulse_source:
             await run_checked(["pactl", "suspend-source", self.host_pulse_source, "0"], timeout=4, env=self.host_pulse_env)
         for process in reversed(list(self.processes.values())):
@@ -735,6 +814,8 @@ class PulseAudioManager:
         self.host_pulse_bridge_engine = ""
         self.wired_bridge_engine = ""
         self.last_input_level = None
+        self.current_input_level = None
+        self.current_input_level_at = 0.0
         self.host_pulse_source_suspended = False
 
     async def _try_exclusive_alsa_after_host_release(self, devices: dict, candidates: list[str]) -> bool:
@@ -801,6 +882,8 @@ class PulseAudioManager:
                 "bridge_engine": self.host_pulse_bridge_engine,
                 "bridge": "running",
             }
+        if self.current_input_level and time.monotonic() - self.current_input_level_at < 1.0:
+            return {**self.current_input_level, "engine": self.wired_bridge_engine or self.host_pulse_bridge_engine}
         if self.wired_capture_mode == "pulseaudio_source":
             command = [
                 "parec",

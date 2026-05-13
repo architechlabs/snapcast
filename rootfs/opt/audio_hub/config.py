@@ -51,8 +51,8 @@ DEFAULTS: dict[str, Any] = {
         "jsonrpc_port": 41705,
         "http_port": 41780,
         "codec": "pcm",
-        "buffer_ms": 40,
-        "chunk_ms": 5,
+        "buffer_ms": 20,
+        "chunk_ms": 2,
     },
     "music_assistant": {
         "enabled": True,
@@ -128,8 +128,8 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     if config["music_assistant"]["low_latency_mode"]:
         config["audio"]["latency_ms"] = 10
         config["audio"]["buffer_ms"] = 40
-        config["snapcast"]["buffer_ms"] = 40
-        config["snapcast"]["chunk_ms"] = 5
+        config["snapcast"]["buffer_ms"] = 20
+        config["snapcast"]["chunk_ms"] = 2
     for key, (old_port, new_port) in SNAPCAST_PORT_MIGRATIONS.items():
         if config["snapcast"][key] == old_port:
             config["snapcast"][key] = new_port

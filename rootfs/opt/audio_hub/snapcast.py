@@ -406,21 +406,41 @@ class SnapcastManager:
     async def ensure_tap_audio(self) -> None:
         if self.tap_loopback_module:
             return
-        args = [
-            "load-module",
-            "module-loopback",
-            "source=ma_music_tap.monitor",
-            "sink=snap_hub_mix",
-            "latency_msec=5",
-            "adjust_time=0",
-            "source_output_properties=application.name=ma_music_tap_source",
-            "sink_input_properties=application.name=ma_music_tap media.role=music",
+        attempts = [
+            [
+                "load-module",
+                "module-loopback",
+                "source=ma_music_tap.monitor",
+                "sink=snap_hub_mix",
+                "latency_msec=5",
+                "adjust_time=0",
+                "source_output_properties=application.name=ma_music_tap_source",
+                "sink_input_properties=application.name=ma_music_tap",
+            ],
+            [
+                "load-module",
+                "module-loopback",
+                "source=ma_music_tap.monitor",
+                "sink=snap_hub_mix",
+                "latency_msec=5",
+                "adjust_time=0",
+            ],
+            [
+                "load-module",
+                "module-loopback",
+                "source=ma_music_tap.monitor",
+                "sink=snap_hub_mix",
+                "latency_msec=10",
+            ],
         ]
-        rc, out = await run_checked(["pactl", *args], timeout=5, env=PULSE_ENV)
-        if rc == 0 and out.strip().isdigit():
-            self.tap_loopback_module = out.strip()
-            return
-        LOG.warning("could not enable MA music tap loopback: %s", out.strip())
+        errors = []
+        for args in attempts:
+            rc, out = await run_checked(["pactl", *args], timeout=5, env=PULSE_ENV)
+            if rc == 0 and out.strip().isdigit():
+                self.tap_loopback_module = out.strip()
+                return
+            errors.append(out.strip())
+        LOG.warning("could not enable MA music tap loopback: %s", " | ".join(error for error in errors if error))
 
     async def apply_music_volume(self) -> None:
         volume = self.config.get("music_assistant", {}).get("music_volume", 0.85)
