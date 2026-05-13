@@ -20,7 +20,7 @@ DEFAULTS: dict[str, Any] = {
         "format": "s16le",
         "latency_ms": 40,
         "buffer_ms": 200,
-        "keepalive_silence": False,
+        "keepalive_silence": True,
         "routing_mode": "mix",
     },
     "wired": {
@@ -28,7 +28,7 @@ DEFAULTS: dict[str, Any] = {
         "device": "auto",
         "profile": "line_in",
         "capture_backend": "auto",
-        "latency_ms": 15,
+        "latency_ms": 8,
         "volume": 0.9,
         "mute": False,
     },
@@ -60,6 +60,7 @@ DEFAULTS: dict[str, Any] = {
         "tap_client_id": "audio-hub-ma-tap",
         "tap_client_name": "Audio Hub Mix Input",
         "auto_route_players": True,
+        "manage_tap_group_stream": False,
         "music_volume": 0.85,
         "mic_injection_enabled": True,
         "ducking_enabled": False,
@@ -116,15 +117,18 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     config["music_assistant"]["stream_prefix"] = str(config["music_assistant"].get("stream_prefix") or "MusicAssistant")
     config["music_assistant"]["tap_client_id"] = str(config["music_assistant"].get("tap_client_id") or "audio-hub-ma-tap")
     config["music_assistant"]["tap_client_name"] = str(config["music_assistant"].get("tap_client_name") or "Audio Hub Mix Input")
+    config["music_assistant"]["manage_tap_group_stream"] = bool(config["music_assistant"].get("manage_tap_group_stream", False))
+    if config["music_assistant"].get("enabled", True):
+        config["audio"]["keepalive_silence"] = True
     for key in ("tcp_pcm_port", "rtp_port"):
         config["network"][key] = int(config["network"][key])
     for key in ("client_stream_port", "jsonrpc_port", "http_port", "buffer_ms"):
         config["snapcast"][key] = int(config["snapcast"][key])
     config["snapcast"]["chunk_ms"] = int(config["snapcast"].get("chunk_ms", 10))
     if config["music_assistant"]["low_latency_mode"]:
-        config["audio"]["latency_ms"] = max(35, min(config["audio"]["latency_ms"], 60))
-        config["audio"]["buffer_ms"] = max(160, min(config["audio"]["buffer_ms"], 300))
-        config["snapcast"]["buffer_ms"] = max(300, min(config["snapcast"]["buffer_ms"], 450))
+        config["audio"]["latency_ms"] = max(20, min(config["audio"]["latency_ms"], 45))
+        config["audio"]["buffer_ms"] = max(120, min(config["audio"]["buffer_ms"], 240))
+        config["snapcast"]["buffer_ms"] = max(220, min(config["snapcast"]["buffer_ms"], 380))
         config["snapcast"]["chunk_ms"] = max(10, min(config["snapcast"]["chunk_ms"], 20))
     for key, (old_port, new_port) in SNAPCAST_PORT_MIGRATIONS.items():
         if config["snapcast"][key] == old_port:

@@ -119,7 +119,7 @@ class PulseAudioManager:
             [
                 "bash",
                 "-lc",
-                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(25, min(60, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
+                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(10, min(40, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
             ],
             env=PULSE_ENV,
         )
@@ -205,6 +205,16 @@ class PulseAudioManager:
         errors = []
         backend = self.config["wired"].get("capture_backend", "auto")
         capture_latency = int(self.config["wired"].get("latency_ms", min(latency, 20)))
+        host_pulse_tried = False
+
+        if backend == "auto" and host_pulse_env_candidates():
+            host_pulse_tried = True
+            if await self._start_host_pulse_bridge(devices, capture_latency):
+                self.wired_source_loaded = True
+                self.wired_device = "haos_pulse_source"
+                self.wired_capture_mode = "haos_pulse_bridge"
+                self.wired_busy = False
+                return
 
         if backend in ("auto", "direct_alsa"):
             for candidate in candidates:
@@ -224,7 +234,7 @@ class PulseAudioManager:
             LOG.warning("%s", self.wired_error)
             return
 
-        if backend in ("auto", "haos_pulse") and await self._start_host_pulse_bridge(devices, capture_latency):
+        if backend in ("auto", "haos_pulse") and not host_pulse_tried and await self._start_host_pulse_bridge(devices, capture_latency):
             self.wired_source_loaded = True
             self.wired_device = "haos_pulse_source"
             self.wired_capture_mode = "haos_pulse_bridge"
@@ -352,7 +362,7 @@ class PulseAudioManager:
                 "-f",
                 "alsa",
                 "-thread_queue_size",
-                "128",
+                "64",
                 "-i",
                 device,
                 "-ar",
@@ -364,6 +374,14 @@ class PulseAudioManager:
                 "snap_hub_mix",
             ],
             env={**PULSE_ENV, "PULSE_PROP": "media.role=phone application.name=wired_alsa_bridge"},
+            quiet_substrings=[
+                "cannot open audio device",
+                "Error opening input",
+                "Error opening input file",
+                "Error opening input files",
+                "ALSA lib pcm_dsnoop",
+                "ALSA lib conf",
+            ],
         )
         self.processes["wired-alsa-bridge"] = bridge
         await bridge.start()
@@ -823,7 +841,7 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     source_arg = shlex.quote(source)
     cookie_part = f" PULSE_COOKIE={host_cookie}" if host_cookie != "''" else " PULSE_COOKIE="
     runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else " PULSE_RUNTIME_PATH="
-    latency = max(10, min(30, int(latency_ms)))
+    latency = max(5, min(20, int(latency_ms)))
     return (
         f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
         f"parec -d {source_arg} --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "

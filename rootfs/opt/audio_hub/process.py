@@ -50,10 +50,10 @@ class ManagedProcess:
             if not line:
                 break
             text = line.decode(errors="replace").rstrip()
-            if any(marker in text for marker in self.quiet_substrings):
-                continue
             self.last_output.append(text)
             self.last_output = self.last_output[-20:]
+            if any(marker in text for marker in self.quiet_substrings):
+                continue
             LOG.info("[%s] %s", self.name, text)
 
     async def stop(self) -> None:
