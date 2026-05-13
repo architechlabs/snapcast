@@ -95,6 +95,8 @@ class SnapcastManager:
             "--config",
             str(CONFIG_PATH),
             "--server.mdns=false",
+            f"--buffer={cfg['snapcast']['buffer_ms']}",
+            f"--streamBuffer={cfg['snapcast'].get('chunk_ms', 5)}",
             f"--stream.buffer={cfg['snapcast']['buffer_ms']}",
         ]
         self.process = ManagedProcess("snapserver", command, quiet_substrings=quiet)
@@ -102,6 +104,21 @@ class SnapcastManager:
         await asyncio.sleep(0.4)
         if not self.process.running():
             LOG.warning("snapserver rejected --server.mdns=false; retrying with config-only mDNS disable")
+            self.process = ManagedProcess(
+                "snapserver",
+                [
+                    "snapserver",
+                    "--config",
+                    str(CONFIG_PATH),
+                    f"--buffer={cfg['snapcast']['buffer_ms']}",
+                    f"--streamBuffer={cfg['snapcast'].get('chunk_ms', 5)}",
+                ],
+                quiet_substrings=quiet,
+            )
+            await self.process.start()
+        await asyncio.sleep(0.4)
+        if not self.process.running():
+            LOG.warning("snapserver rejected explicit low-latency CLI flags; retrying with config-only settings")
             self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH)], quiet_substrings=quiet)
             await self.process.start()
 
