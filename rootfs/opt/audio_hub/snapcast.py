@@ -46,6 +46,7 @@ class SnapcastManager:
             f"&sampleformat={cfg['audio']['sample_rate']}:{bits_from_format(cfg['audio']['format'])}:{cfg['audio']['channels']}"
             f"&codec={cfg['snapcast']['codec']}"
             f"&chunk_ms={cfg['snapcast'].get('chunk_ms', 10)}"
+            f"&buffer={cfg['snapcast']['buffer_ms']}"
         )
         CONFIG_PATH.write_text(
             "\n".join([

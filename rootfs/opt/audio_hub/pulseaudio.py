@@ -44,6 +44,7 @@ class PulseAudioManager:
         self.host_pulse_env: dict[str, str] | None = None
         self.host_pulse_source: str | None = None
         self.host_pulse_bridge_engine = ""
+        self.wired_bridge_engine = ""
         self.last_input_level: dict | None = None
         self.host_pulse_source_suspended = False
 
@@ -123,9 +124,9 @@ class PulseAudioManager:
             [
                 "bash",
                 "-lc",
-                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(5, min(15, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
+                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(5, min(10, latency))} --process-time-msec=5 --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
             ],
-            env=PULSE_ENV,
+            env={**PULSE_ENV, "PULSE_LATENCY_MSEC": "5"},
         )
         self.processes["parec"] = parec
         await parec.start()
@@ -323,6 +324,7 @@ class PulseAudioManager:
         self.wired_error = ""
         self.wired_busy = False
         self.host_pulse_bridge_engine = ""
+        self.wired_bridge_engine = ""
 
     async def _try_pulse_alsa_source(self, device: str, source_name: str, latency: int) -> bool:
         rate = str(self.config["audio"]["sample_rate"])
@@ -361,6 +363,8 @@ class PulseAudioManager:
                 await run_checked(["pactl", "unload-module", parts[0]], timeout=5, env=PULSE_ENV)
 
     async def _start_ffmpeg_alsa_bridge(self, device: str) -> bool:
+        if await self._start_arecord_alsa_bridge(device):
+            return True
         cfg = self.config
         rate = int(cfg["audio"]["sample_rate"])
         channels = int(cfg["audio"]["channels"])
@@ -382,6 +386,8 @@ class PulseAudioManager:
                 "32",
                 "-i",
                 device,
+                "-af",
+                "aresample=async=1:first_pts=0:min_hard_comp=0.05",
                 "-ar",
                 str(rate),
                 "-ac",
@@ -397,6 +403,7 @@ class PulseAudioManager:
                 "Error opening input files",
                 "ALSA lib pcm_dsnoop",
                 "ALSA lib conf",
+                "ALSA buffer xrun",
             ],
         )
         self.processes["wired-alsa-bridge"] = bridge
@@ -410,7 +417,46 @@ class PulseAudioManager:
                 self.wired_error = f"{self.wired_error}\n{busy}"
             return False
         self.wired_error = ""
+        self.wired_bridge_engine = "ffmpeg_pulse"
         LOG.info("wired input attached through FFmpeg ALSA bridge using %s", device)
+        return True
+
+    async def _start_arecord_alsa_bridge(self, device: str) -> bool:
+        cfg = self.config
+        rate = int(cfg["audio"]["sample_rate"])
+        channels = int(cfg["audio"]["channels"])
+        latency = max(5, min(20, int(cfg["wired"].get("latency_ms", 8))))
+        period_us = max(2500, latency * 1000 // 2)
+        buffer_us = max(10000, latency * 1000 * 2)
+        command = (
+            f"arecord -q -D {shlex.quote(device)} -t raw -f S16_LE -r {rate} -c {channels} "
+            f"--period-time={period_us} --buffer-time={buffer_us} "
+            f"| PULSE_SERVER={shlex.quote(PULSE_ENV['PULSE_SERVER'])} PULSE_LATENCY_MSEC=5 "
+            f"PULSE_PROP='media.role=phone application.name=wired_alsa_bridge' "
+            f"pacat --latency-msec=5 --process-time-msec=5 --raw --format=s16le --rate={rate} --channels={channels} -d snap_hub_mix"
+        )
+        bridge = ManagedProcess(
+            "wired-alsa-bridge",
+            ["bash", "-o", "pipefail", "-lc", command],
+            env=PULSE_ENV,
+            quiet_substrings=[
+                "Recording raw data",
+                "overrun",
+                "xrun",
+                "arecord: main:",
+                "Device or resource busy",
+            ],
+        )
+        self.processes["wired-alsa-bridge"] = bridge
+        await bridge.start()
+        await asyncio.sleep(0.8)
+        if not bridge.running():
+            self.wired_error = "\n".join(bridge.last_output[-6:]) or "arecord ALSA bridge exited immediately"
+            self.processes.pop("wired-alsa-bridge", None)
+            return False
+        self.wired_error = ""
+        self.wired_bridge_engine = "arecord_pacat"
+        LOG.info("wired input attached through arecord ALSA bridge using %s", device)
         return True
 
     async def latency_report(self) -> dict:
@@ -420,6 +466,7 @@ class PulseAudioManager:
             "capture": {
                 "attached": self.wired_source_loaded,
                 "mode": self.wired_capture_mode,
+                "engine": self.wired_bridge_engine or self.host_pulse_bridge_engine,
                 "device": self.wired_device,
                 "host_source": self.host_pulse_source,
                 "bridge_engine": self.host_pulse_bridge_engine,
@@ -681,6 +728,7 @@ class PulseAudioManager:
         self.host_pulse_env = None
         self.host_pulse_source = None
         self.host_pulse_bridge_engine = ""
+        self.wired_bridge_engine = ""
         self.last_input_level = None
         self.host_pulse_source_suspended = False
 
