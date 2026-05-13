@@ -54,6 +54,7 @@ DEFAULTS: dict[str, Any] = {
         "enabled": True,
         "stream_prefix": "MusicAssistant",
         "tap_client_id": "audio-hub-ma-tap",
+        "tap_client_name": "Audio Hub Mix Input",
         "auto_route_players": True,
         "music_volume": 0.85,
         "mic_injection_enabled": True,
@@ -103,6 +104,7 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     config["music_assistant"]["ducking_level"] = clamp(float(config["music_assistant"].get("ducking_level", 0.35)), 0.0, 1.0)
     config["music_assistant"]["stream_prefix"] = str(config["music_assistant"].get("stream_prefix") or "MusicAssistant")
     config["music_assistant"]["tap_client_id"] = str(config["music_assistant"].get("tap_client_id") or "audio-hub-ma-tap")
+    config["music_assistant"]["tap_client_name"] = str(config["music_assistant"].get("tap_client_name") or "Audio Hub Mix Input")
     for key in ("tcp_pcm_port", "rtp_port"):
         config["network"][key] = int(config["network"][key])
     for key in ("client_stream_port", "jsonrpc_port", "http_port", "buffer_ms"):

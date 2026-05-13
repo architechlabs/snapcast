@@ -131,28 +131,32 @@ class SnapcastManager:
 
         final_stream = find_stream(server, self.config["snapcast"]["stream_name"])
         ma_stream = find_music_assistant_stream(server, ma_cfg.get("stream_prefix", "MusicAssistant"), final_stream)
-        groups = summarize_groups(server)
-        clients = summarize_clients(server)
-        if not ma_stream:
-            await self.disable_tap_audio()
-            self.bridge_status = {
-                "enabled": True,
-                "state": "waiting_for_music",
-                "ma_stream": None,
-                "final_stream": final_stream,
-                "tap_client": None,
-                "tap_group": None,
-                "groups": groups,
-                "clients": clients,
-                "error": "",
-            }
-            return self.bridge_status
-
         await self.ensure_tap_process()
         await asyncio.sleep(0.25)
         status = await self.server_status()
         server = extract_server(status) or server
         tap_client = find_tap_client(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
+        if tap_client:
+            await self.set_client_name(client_id(tap_client), ma_cfg.get("tap_client_name", "Audio Hub Mix Input"))
+        groups = summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
+        clients = summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap"))
+        user_client_count = sum(1 for client in clients if not client.get("internal_tap"))
+        if not ma_stream:
+            await self.disable_tap_audio()
+            self.bridge_status = {
+                "enabled": True,
+                "state": "waiting_for_snapcast_players" if user_client_count == 0 else "waiting_for_music",
+                "ma_stream": None,
+                "final_stream": final_stream,
+                "tap_client": client_id(tap_client),
+                "tap_group": group_id(find_group_for_client(server, tap_client)),
+                "user_client_count": user_client_count,
+                "groups": groups,
+                "clients": clients,
+                "error": "Music Assistant will show the virtual Audio Hub Mix Input client first. Add real Snapcast clients for speakers, then play to/group them in MA." if user_client_count == 0 else "",
+            }
+            return self.bridge_status
+
         tap_group = find_group_for_client(server, tap_client)
         if not tap_client or not tap_group:
             await self.disable_tap_audio()
@@ -163,8 +167,9 @@ class SnapcastManager:
                 "final_stream": final_stream,
                 "tap_client": None,
                 "tap_group": None,
-                "groups": summarize_groups(server),
-                "clients": summarize_clients(server),
+                "user_client_count": user_client_count,
+                "groups": summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap")),
+                "clients": summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap")),
                 "error": "internal Snapclient tap has not appeared in Snapserver yet",
             }
             return self.bridge_status
@@ -173,6 +178,7 @@ class SnapcastManager:
             await self.set_group_stream(group_id(tap_group), ma_stream)
             await asyncio.sleep(0.15)
         await self.ensure_tap_audio()
+        tap_group_has_speakers = group_has_clients_other_than(tap_group, client_id(tap_client))
 
         rerouted = []
         if ma_cfg.get("auto_route_players", True) and final_stream:
@@ -187,15 +193,17 @@ class SnapcastManager:
 
         self.bridge_status = {
             "enabled": True,
-            "state": "mixing_music",
+            "state": "mixing_music_no_output_players" if user_client_count == 0 else "mixing_music",
             "ma_stream": ma_stream,
             "final_stream": final_stream,
             "tap_client": client_id(tap_client),
             "tap_group": group_id(tap_group),
+            "user_client_count": user_client_count,
+            "tap_group_has_speakers": tap_group_has_speakers,
             "rerouted_groups": rerouted,
-            "groups": summarize_groups(server),
-            "clients": summarize_clients(server),
-            "error": "",
+            "groups": summarize_groups(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap")),
+            "clients": summarize_clients(server, ma_cfg.get("tap_client_id", "audio-hub-ma-tap")),
+            "error": "Do not group Audio Hub Mix Input with speaker clients in Music Assistant; keep it as the source/tap player only." if tap_group_has_speakers else ("Music is being mixed, but no real Snapcast playback clients are connected." if user_client_count == 0 else ""),
         }
         return self.bridge_status
 
@@ -275,6 +283,11 @@ class SnapcastManager:
             params["volume"]["muted"] = bool(muted)
         return await self.rpc("Client.SetVolume", params)
 
+    async def set_client_name(self, client: str | None, name: str | None) -> dict:
+        if not client or not name:
+            return {"ok": False, "error": "missing client or name"}
+        return await self.rpc("Client.SetName", {"id": client, "name": name})
+
 
 def extract_server(status: dict) -> dict | None:
     if not isinstance(status, dict):
@@ -332,6 +345,16 @@ def find_group_for_client(server: dict, client: dict | None) -> dict | None:
     return None
 
 
+def group_has_clients_other_than(group: dict | None, tap_client_id: str | None) -> bool:
+    if not isinstance(group, dict) or not tap_client_id:
+        return False
+    for item in group.get("clients", []):
+        item_id = item.get("id") if isinstance(item, dict) else item
+        if item_id and item_id != tap_client_id:
+            return True
+    return False
+
+
 def group_id(group: dict | None) -> str | None:
     return str(group.get("id")) if isinstance(group, dict) and group.get("id") is not None else None
 
@@ -346,26 +369,30 @@ def client_id(client: dict | None) -> str | None:
     return str(client.get("id")) if isinstance(client, dict) and client.get("id") is not None else None
 
 
-def summarize_groups(server: dict) -> list[dict]:
+def summarize_groups(server: dict, tap_id: str = "audio-hub-ma-tap") -> list[dict]:
     result = []
     for group in server.get("groups", []):
         clients = group.get("clients", [])
+        client_ids = [item.get("id") if isinstance(item, dict) else item for item in clients]
+        internal_tap = any(tap_id.lower() in json.dumps(item, sort_keys=True).lower() for item in clients)
         result.append({
             "id": group_id(group),
             "name": group.get("name") or group_id(group),
             "stream": group_stream(group),
             "muted": group.get("muted", False),
-            "clients": [item.get("id") if isinstance(item, dict) else item for item in clients],
+            "clients": client_ids,
+            "internal_tap": internal_tap,
         })
     return result
 
 
-def summarize_clients(server: dict) -> list[dict]:
+def summarize_clients(server: dict, tap_id: str = "audio-hub-ma-tap") -> list[dict]:
     result = []
     for client in server.get("clients", []):
         host = client.get("host", {}) if isinstance(client.get("host"), dict) else {}
         config = client.get("config", {}) if isinstance(client.get("config"), dict) else {}
         volume = config.get("volume", {}) if isinstance(config.get("volume"), dict) else {}
+        internal_tap = tap_id.lower() in json.dumps(client, sort_keys=True).lower()
         result.append({
             "id": client_id(client),
             "name": config.get("name") or host.get("name") or client_id(client),
@@ -373,6 +400,7 @@ def summarize_clients(server: dict) -> list[dict]:
             "connected": client.get("connected", True),
             "volume": volume.get("percent"),
             "muted": volume.get("muted"),
+            "internal_tap": internal_tap,
         })
     return result
 

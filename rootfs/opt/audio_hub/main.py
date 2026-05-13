@@ -131,6 +131,7 @@ class AudioHub:
             await self.restart_pipeline()
         else:
             self.pulse.config = self.config
+            self.snapcast.config = self.config
             await self.apply_live_patch(patch)
             self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)
         return await self.status()

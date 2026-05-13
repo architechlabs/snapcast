@@ -643,11 +643,14 @@
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
       const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
-      $("playerList").innerHTML = groups.length ? groups.map((group) => {
+      const userGroups = groups.filter((group) => !group.internal_tap);
+      const tapClient = clients.find((client) => client.internal_tap);
+      const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
+      $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
         return `<div class="player-item"><strong>${group.name || group.id}</strong><span>Stream: ${group.stream || "none"}</span><span>${names}</span><div class="actions"><button class="secondary" data-action="use_final_stream" data-group="${safeId}">Use Mix</button><button class="secondary" data-action="use_ma_stream" data-group="${safeId}">Use MA Raw</button></div></div>`;
-      }).join("") : `<div class="player-item"><strong>No Snapcast groups yet</strong><span>Start a Snapcast client or play from Music Assistant.</span></div>`;
+      }).join("")}` : `${tapInfo}<div class="player-item"><strong>No speaker Snapcast clients connected</strong><span>Music Assistant will only show the virtual Audio Hub Mix Input until you start a Snapcast client on a phone, browser, another add-on, or speaker endpoint.</span></div>`;
     }
 
     function renderCaptureDevices(devices, selected) {
