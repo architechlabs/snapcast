@@ -53,13 +53,60 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     async def live_opus_stream(request):
         return await live_encoded_stream(request, "opus")
 
+    async def live_wav_stream(request):
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "audio/wav",
+                "Cache-Control": "no-store",
+                "Pragma": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+        proc = await asyncio.create_subprocess_exec(
+            "parec",
+            "-d",
+            "snap_hub_mix.monitor",
+            "--latency-msec=5",
+            "--process-time-msec=5",
+            "--raw",
+            "--format=s16le",
+            "--rate=48000",
+            "--channels=2",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env={**PULSE_ENV, "PULSE_LATENCY_MSEC": "5"},
+        )
+        try:
+            await response.write(wav_stream_header(48000, 2, 16))
+            while proc.stdout:
+                chunk = await proc.stdout.read(960)
+                if not chunk:
+                    break
+                await response.write(chunk)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+        return response
+
     async def live_encoded_stream(request, codec: str):
         response = web.StreamResponse(
             status=200,
             headers={
                 "Content-Type": "audio/ogg; codecs=opus" if codec == "opus" else "audio/mpeg",
                 "Cache-Control": "no-store",
+                "Pragma": "no-cache",
                 "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
             },
         )
         await response.prepare(request)
@@ -94,6 +141,10 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "-hide_banner",
             "-loglevel",
             "error",
+            "-probesize",
+            "32",
+            "-analyzeduration",
+            "0",
             "-fflags",
             "nobuffer",
             "-flags",
@@ -101,7 +152,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "-f",
             "pulse",
             "-fragment_size",
-            "960",
+            "480",
             "-i",
             "snap_hub_mix.monitor",
             "-ac",
@@ -120,10 +171,12 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
                 "10",
                 "-b:a",
                 "96k",
-                "-f",
-                "ogg",
                 "-flush_packets",
                 "1",
+                "-page_duration",
+                "10000",
+                "-f",
+                "ogg",
                 "-",
             ]
         return [
@@ -132,6 +185,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "libmp3lame",
             "-q:a",
             "4",
+            "-flush_packets",
+            "1",
             "-f",
             "mp3",
             "-",
@@ -152,8 +207,11 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_get("/api/live.opus", live_opus_stream)
     app.router.add_get("/{prefix:.+}/api/live.opus", live_opus_stream)
+    app.router.add_get("/api/live.wav", live_wav_stream)
+    app.router.add_get("/{prefix:.+}/api/live.wav", live_wav_stream)
     app.router.add_get("/live.mp3", live_stream)
     app.router.add_get("/live.opus", live_opus_stream)
+    app.router.add_get("/live.wav", live_wav_stream)
     app.router.add_post("/api/snapcast/action", snapcast_action)
     app.router.add_post("/{prefix:.+}/api/snapcast/action", snapcast_action)
     app.router.add_patch("/api/config", patch_config)
@@ -168,3 +226,24 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_post("/{prefix:.+}/api/entities/remove", remove_entities)
     app.router.add_static("/static", static_root)
     return app
+
+
+def wav_stream_header(sample_rate: int, channels: int, bits: int) -> bytes:
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    data_size = 0x7FFFFFF0
+    riff_size = data_size + 36
+    return (
+        b"RIFF"
+        + riff_size.to_bytes(4, "little")
+        + b"WAVEfmt "
+        + (16).to_bytes(4, "little")
+        + (1).to_bytes(2, "little")
+        + channels.to_bytes(2, "little")
+        + sample_rate.to_bytes(4, "little")
+        + byte_rate.to_bytes(4, "little")
+        + block_align.to_bytes(2, "little")
+        + bits.to_bytes(2, "little")
+        + b"data"
+        + data_size.to_bytes(4, "little")
+    )

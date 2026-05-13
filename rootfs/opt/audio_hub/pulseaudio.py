@@ -42,6 +42,7 @@ class PulseAudioManager:
         self.host_pulse_error = ""
         self.host_pulse_env: dict[str, str] | None = None
         self.host_pulse_source: str | None = None
+        self.host_pulse_bridge_engine = ""
 
     async def start(self, devices: dict) -> None:
         await self.stop()
@@ -119,7 +120,7 @@ class PulseAudioManager:
             [
                 "bash",
                 "-lc",
-                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(10, min(40, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
+                f"exec parec -d snap_hub_mix.monitor --latency-msec={max(5, min(15, latency))} --raw --format={cfg['audio']['format']} --rate={rate} --channels={channels} > {FIFO}",
             ],
             env=PULSE_ENV,
         )
@@ -291,7 +292,7 @@ class PulseAudioManager:
         bridge = self.processes.get("wired-alsa-bridge")
         if self.wired_source_loaded and self.wired_capture_mode == "ffmpeg_alsa_bridge" and bridge and bridge.running():
             return True
-        if self.wired_source_loaded and self.wired_capture_mode == "pulseaudio_source":
+        if self.wired_source_loaded and self.wired_capture_mode in ("pulseaudio_source", "haos_pulse_bridge"):
             return True
         await self._stop_wired_capture()
         await self._setup_wired_source(devices, self.config["audio"]["latency_ms"])
@@ -311,6 +312,7 @@ class PulseAudioManager:
         self.wired_capture_mode = "none"
         self.wired_error = ""
         self.wired_busy = False
+        self.host_pulse_bridge_engine = ""
 
     async def _try_pulse_alsa_source(self, device: str, source_name: str, latency: int) -> bool:
         rate = str(self.config["audio"]["sample_rate"])
@@ -327,7 +329,7 @@ class PulseAudioManager:
         for args in attempts:
             try:
                 await self._pactl("load-module", "module-alsa-source", *args)
-                loopback_args = ["load-module", "module-loopback", f"source={source_name}", "sink=snap_hub_mix", f"latency_msec={latency}"]
+                loopback_args = ["load-module", "module-loopback", f"source={source_name}", "sink=snap_hub_mix", f"latency_msec={max(5, min(20, latency))}"]
                 if self.config["audio"]["routing_mode"] == "fallback_duck" or self.config.get("music_assistant", {}).get("ducking_enabled"):
                     loopback_args.append("sink_input_properties=media.role=phone")
                 await self._pactl(*loopback_args)
@@ -406,24 +408,42 @@ class PulseAudioManager:
             return False
         await self._prepare_host_pulse_source(host_env, source)
         cfg = self.config
-        bridge = ManagedProcess(
-            "host-pulse-capture-bridge",
-            ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"], latency_ms)],
-            env=PULSE_ENV,
-            quiet_substrings=["Failed to create secure directory"],
+        bridges = (
+            (
+                "ffmpeg_pulse",
+                host_pulse_ffmpeg_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], latency_ms),
+                {},
+            ),
+            (
+                "parec_pacat",
+                ["bash", "-o", "pipefail", "-lc", host_pulse_bridge_command(host_env, source, cfg["audio"]["sample_rate"], cfg["audio"]["channels"], cfg["audio"]["format"], latency_ms)],
+                PULSE_ENV,
+            ),
         )
-        self.processes["host-pulse-capture-bridge"] = bridge
-        await bridge.start()
-        await asyncio.sleep(0.8)
-        if not bridge.running():
-            self.wired_error = "\n".join(bridge.last_output[-6:]) or "HAOS PulseAudio capture bridge exited immediately"
-            LOG.warning("HAOS PulseAudio capture bridge failed for %s: %s", source, self.wired_error)
-            return False
-        self.wired_error = ""
-        self.host_pulse_env = host_env
-        self.host_pulse_source = source
-        LOG.info("wired input attached through HAOS PulseAudio source %s", source)
-        return True
+        last_error = ""
+        for engine, command, env in bridges:
+            bridge = ManagedProcess(
+                "host-pulse-capture-bridge",
+                command,
+                env=env,
+                quiet_substrings=["Failed to create secure directory"],
+            )
+            self.processes["host-pulse-capture-bridge"] = bridge
+            await bridge.start()
+            await asyncio.sleep(0.8)
+            if bridge.running():
+                self.wired_error = ""
+                self.host_pulse_env = host_env
+                self.host_pulse_source = source
+                self.host_pulse_bridge_engine = engine
+                LOG.info("wired input attached through HAOS PulseAudio source %s using %s", source, engine)
+                return True
+            last_error = "\n".join(bridge.last_output[-8:]) or "HAOS PulseAudio capture bridge exited immediately"
+            LOG.warning("HAOS PulseAudio %s bridge failed for %s: %s", engine, source, last_error)
+            self.processes.pop("host-pulse-capture-bridge", None)
+        self.wired_error = last_error
+        self.host_pulse_error = last_error
+        return False
 
     async def _prepare_host_pulse_source(self, host_env: dict[str, str], source: str) -> None:
         await run_checked(["pactl", "set-source-mute", source, "0"], timeout=4, env=host_env)
@@ -651,6 +671,7 @@ class PulseAudioManager:
                 **mix_level,
                 "source": self.host_pulse_source,
                 "stage": "snapcast_mix",
+                "bridge_engine": self.host_pulse_bridge_engine,
                 "bridge": "running",
             }
         if self.wired_capture_mode == "pulseaudio_source":
@@ -693,25 +714,17 @@ class PulseAudioManager:
 
     async def _mix_monitor_level(self) -> dict:
         command = [
-            "ffmpeg",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-f",
-            "pulse",
-            "-i",
+            "parec",
+            "-d",
             "snap_hub_mix.monitor",
-            "-t",
-            "0.6",
-            "-ac",
-            "1",
-            "-ar",
+            "--latency-msec=5",
+            "--raw",
+            "--format=s16le",
+            "--rate",
             "16000",
-            "-f",
-            "s16le",
-            "-",
+            "--channels=1",
         ]
-        rc, raw, err = await run_binary(command, timeout=3, env=PULSE_ENV, max_bytes=64000)
+        rc, raw, err = await run_binary(command, timeout=0.25, env=PULSE_ENV, max_bytes=16000)
         if not raw:
             error = err.decode(errors="replace")[:400] or self.wired_error or "no PCM bytes received from mixer monitor"
             return {"ok": False, "state": "capture_unavailable", "level": 0, "peak": 0, "mode": self.wired_capture_mode, "error": error}
@@ -843,11 +856,51 @@ def host_pulse_bridge_command(host_env: dict[str, str], source: str, rate: int, 
     runtime_part = f" PULSE_RUNTIME_PATH={host_runtime}" if host_runtime != "''" else " PULSE_RUNTIME_PATH="
     latency = max(5, min(20, int(latency_ms)))
     return (
-        f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} "
-        f"parec -d {source_arg} --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
-        f"| PULSE_SERVER={local_server} PULSE_PROP='media.role=phone application.name=host_pulse_bridge' "
-        f"pacat --latency-msec={latency} --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} -d snap_hub_mix"
+        f"PULSE_SERVER={host_server}{cookie_part}{runtime_part} PULSE_LATENCY_MSEC={latency} "
+        f"parec -d {source_arg} --latency-msec={latency} --process-time-msec=5 --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} "
+        f"| PULSE_SERVER={local_server} PULSE_LATENCY_MSEC={latency} PULSE_PROP='media.role=phone application.name=host_pulse_bridge' "
+        f"pacat --latency-msec={latency} --process-time-msec=5 --raw --format={audio_format} --rate={int(rate)} --channels={int(channels)} -d snap_hub_mix"
     )
+
+
+def host_pulse_ffmpeg_bridge_command(host_env: dict[str, str], source: str, rate: int, channels: int, latency_ms: int) -> list[str]:
+    latency = max(5, min(20, int(latency_ms)))
+    frames = max(240, int(rate) * latency // 1000)
+    host_server = host_env.get("PULSE_SERVER", "")
+    local_server = PULSE_ENV["PULSE_SERVER"]
+    return [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "warning",
+        "-probesize",
+        "32",
+        "-analyzeduration",
+        "0",
+        "-fflags",
+        "nobuffer",
+        "-flags",
+        "low_delay",
+        "-f",
+        "pulse",
+        "-server",
+        host_server,
+        "-fragment_size",
+        str(frames),
+        "-i",
+        source,
+        "-ac",
+        str(int(channels)),
+        "-ar",
+        str(int(rate)),
+        "-f",
+        "pulse",
+        "-server",
+        local_server,
+        "-fragment_size",
+        str(frames),
+        "snap_hub_mix",
+    ]
 
 
 def concise_error(prefix: str, errors: list[str]) -> str:

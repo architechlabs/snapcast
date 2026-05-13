@@ -485,7 +485,7 @@
         </label>
         <label>
           <span>Latency <b id="latencyValue"></b></span>
-          <input id="latency" type="range" min="40" max="1000" step="10">
+          <input id="latency" type="range" min="10" max="1000" step="5">
         </label>
         <label class="device-select">
           <span>Capture device</span>
@@ -599,7 +599,7 @@
 
       $("routingMode").value = config.audio?.routing_mode || "mix";
       $("mainRoutingMode").value = config.audio?.routing_mode || "mix";
-      $("latency").value = config.audio?.latency_ms || 120;
+      $("latency").value = config.audio?.latency_ms || 20;
       $("latencyValue").textContent = `${$("latency").value} ms`;
       renderCaptureDevices(data.devices || {}, config.wired?.device || "auto");
 
@@ -662,8 +662,8 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.opus`;
-      const previewUrl = apiUrl("/api/live.opus");
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.wav`;
+      const previewUrl = apiUrl("/api/live.wav");
       $("liveUrl").textContent = permanentLiveUrl;
       if ($("livePreview").src !== new URL(previewUrl, window.location.href).href) {
         $("livePreview").src = previewUrl;
@@ -719,10 +719,11 @@
         $("mainMeterFill").style.width = `${percent}%`;
         const err = level.error ? ` - ${level.error.slice(0, 120)}` : "";
         const stage = level.stage ? ` / ${level.stage}` : "";
+        const bridge = level.bridge_engine ? ` / ${level.bridge_engine}` : "";
         const mix = typeof level.mix_level === "number" ? ` / mix ${Math.round(level.mix_level * 100)}%` : "";
         const rms = Math.round((level.level || 0) * 1000) / 10;
         const peak = Math.round((level.peak || 0) * 1000) / 10;
-        const text = level.ok ? `${peak}% peak / ${rms}% rms ${level.state}${stage}${mix}` : `${level.state}${err}`;
+        const text = level.ok ? `${peak}% peak / ${rms}% rms ${level.state}${stage}${bridge}${mix}` : `${level.state}${err}`;
         $("meterText").textContent = text;
         $("mainMeterText").textContent = text;
       } catch (err) {
@@ -821,7 +822,7 @@
     refresh();
     refreshLevel();
     setInterval(refresh, 5000);
-    setInterval(refreshLevel, 1000);
+    setInterval(refreshLevel, 250);
   </script>
 </body>
 </html>

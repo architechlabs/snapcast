@@ -52,6 +52,7 @@ class SnapcastManager:
                 "[server]",
                 f"threads = -1",
                 "mdns = false",
+                f"buffer = {cfg['snapcast']['buffer_ms']}",
                 "",
                 "[http]",
                 "enabled = true",
@@ -88,7 +89,14 @@ class SnapcastManager:
             "(StreamServer) onDisconnect:",
             '"data":"Stream not found"',
         ]
-        self.process = ManagedProcess("snapserver", ["snapserver", "--config", str(CONFIG_PATH), "--server.mdns=false"], quiet_substrings=quiet)
+        command = [
+            "snapserver",
+            "--config",
+            str(CONFIG_PATH),
+            "--server.mdns=false",
+            f"--stream.buffer={cfg['snapcast']['buffer_ms']}",
+        ]
+        self.process = ManagedProcess("snapserver", command, quiet_substrings=quiet)
         await self.process.start()
         await asyncio.sleep(0.4)
         if not self.process.running():
@@ -359,7 +367,7 @@ class SnapcastManager:
             "module-loopback",
             "source=ma_music_tap.monitor",
             "sink=snap_hub_mix",
-            f"latency_msec={self.config['audio']['latency_ms']}",
+            f"latency_msec={max(5, min(20, int(self.config['audio']['latency_ms'])))}",
             "sink_input_properties=application.name=ma_music_tap",
         ]
         rc, out = await run_checked(["pactl", *args], timeout=5, env=PULSE_ENV)

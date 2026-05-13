@@ -18,8 +18,8 @@ DEFAULTS: dict[str, Any] = {
         "sample_rate": 48000,
         "channels": 2,
         "format": "s16le",
-        "latency_ms": 40,
-        "buffer_ms": 200,
+        "latency_ms": 20,
+        "buffer_ms": 80,
         "keepalive_silence": True,
         "routing_mode": "mix",
     },
@@ -51,8 +51,8 @@ DEFAULTS: dict[str, Any] = {
         "jsonrpc_port": 41705,
         "http_port": 41780,
         "codec": "pcm",
-        "buffer_ms": 350,
-        "chunk_ms": 10,
+        "buffer_ms": 120,
+        "chunk_ms": 5,
     },
     "music_assistant": {
         "enabled": True,
@@ -126,10 +126,10 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
         config["snapcast"][key] = int(config["snapcast"][key])
     config["snapcast"]["chunk_ms"] = int(config["snapcast"].get("chunk_ms", 10))
     if config["music_assistant"]["low_latency_mode"]:
-        config["audio"]["latency_ms"] = max(20, min(config["audio"]["latency_ms"], 45))
-        config["audio"]["buffer_ms"] = max(120, min(config["audio"]["buffer_ms"], 240))
-        config["snapcast"]["buffer_ms"] = max(220, min(config["snapcast"]["buffer_ms"], 380))
-        config["snapcast"]["chunk_ms"] = max(10, min(config["snapcast"]["chunk_ms"], 20))
+        config["audio"]["latency_ms"] = max(10, min(config["audio"]["latency_ms"], 20))
+        config["audio"]["buffer_ms"] = max(60, min(config["audio"]["buffer_ms"], 100))
+        config["snapcast"]["buffer_ms"] = max(80, min(config["snapcast"]["buffer_ms"], 120))
+        config["snapcast"]["chunk_ms"] = max(5, min(config["snapcast"]["chunk_ms"], 10))
     for key, (old_port, new_port) in SNAPCAST_PORT_MIGRATIONS.items():
         if config["snapcast"][key] == old_port:
             config["snapcast"][key] = new_port
