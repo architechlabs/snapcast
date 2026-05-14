@@ -53,6 +53,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     async def live_stream(request):
         return await live_encoded_stream(request, "mp3")
 
+    async def live_ma_stream(request):
+        return await live_encoded_stream(request, "ma_mp3")
+
     async def live_opus_stream(request):
         return await live_encoded_stream(request, "opus")
 
@@ -190,14 +193,18 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return response
 
     async def live_encoded_stream(request, codec: str):
+        content_type = "audio/mpeg" if codec in ("mp3", "ma_mp3") else "audio/ogg; codecs=opus"
         response = web.StreamResponse(
             status=200,
             headers={
-                "Content-Type": "audio/ogg; codecs=opus" if codec == "opus" else "audio/mpeg",
+                "Content-Type": content_type,
                 "Cache-Control": "no-store",
                 "Pragma": "no-cache",
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
+                "icy-name": "AudioHub Live Mix",
+                "icy-description": "Low latency AudioHub mixed stream",
+                "icy-pub": "0",
             },
         )
         await response.prepare(request)
@@ -208,13 +215,16 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             stderr=asyncio.subprocess.DEVNULL,
             env=PULSE_ENV,
         )
+        read_size = 384 if codec == "ma_mp3" else (1024 if codec == "mp3" else 1024)
         try:
             while proc.stdout:
-                chunk = await proc.stdout.read(2048 if codec == "opus" else 8192)
+                chunk = await proc.stdout.read(read_size)
                 if not chunk:
                     break
-                await response.write(chunk)
+                await asyncio.wait_for(response.write(chunk), timeout=0.5)
         except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        except TimeoutError:
             pass
         finally:
             if proc.returncode is None:
@@ -232,6 +242,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "-hide_banner",
             "-loglevel",
             "error",
+            "-nostdin",
             "-probesize",
             "32",
             "-analyzeduration",
@@ -243,7 +254,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "-f",
             "pulse",
             "-fragment_size",
-            "480",
+            "192",
+            "-thread_queue_size",
+            "16",
             "-i",
             "snap_hub_mix.monitor",
             "-ac",
@@ -251,6 +264,25 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "-ar",
             "48000",
         ]
+        if codec == "ma_mp3":
+            return [
+                *base,
+                "-codec:a",
+                "libmp3lame",
+                "-b:a",
+                "192k",
+                "-write_xing",
+                "0",
+                "-id3v2_version",
+                "0",
+                "-flush_packets",
+                "1",
+                "-max_delay",
+                "0",
+                "-f",
+                "mp3",
+                "-",
+            ]
         if codec == "opus":
             return [
                 *base,
@@ -296,6 +328,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/latency-report", latency_report)
     app.router.add_get("/api/monitor.wav", monitor_clip)
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
+    app.router.add_get("/api/live.ma.mp3", live_ma_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.mp3", live_ma_stream)
     app.router.add_get("/api/live.mp3", live_stream)
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_get("/api/live.opus", live_opus_stream)
@@ -306,6 +340,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.raw", live_raw_stream)
     app.router.add_get("/api/live.wav", live_wav_stream)
     app.router.add_get("/{prefix:.+}/api/live.wav", live_wav_stream)
+    app.router.add_get("/live.ma.mp3", live_ma_stream)
     app.router.add_get("/live.mp3", live_stream)
     app.router.add_get("/live.opus", live_opus_stream)
     app.router.add_get("/live.raw", live_raw_stream)

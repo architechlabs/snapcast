@@ -180,6 +180,11 @@
       overflow-wrap: anywhere;
     }
 
+    .player-item.warning {
+      border-color: rgba(239, 107, 107, .72);
+      background: rgba(239, 107, 107, .08);
+    }
+
     .copyline {
       display: grid;
       grid-template-columns: 1fr auto;
@@ -659,6 +664,8 @@
         tile("Capture Mode", health.capture_mode),
         tile("Capture Bridge", health.capture_bridge || "n/a"),
         tile("Capture Error", health.capture_error || "none"),
+        tile("Low-latency Output", health.low_latency_output || "unknown"),
+        tile("Output Detail", health.output_message || "unknown"),
         tile("HAOS Audio", health.haos_audio_error || "ok / not needed"),
         tile("Network Input", health.network_input),
         tile("Bluetooth", health.bluetooth_input),
@@ -691,7 +698,7 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.opus`;
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.mp3`;
       $("liveUrl").textContent = permanentLiveUrl;
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
@@ -699,11 +706,12 @@
       const userGroups = groups.filter((group) => !group.internal_tap);
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
+      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now low-latency MP3</strong><span>The green meter is pre-output and live. Use the copied /live.ma.mp3 URL in Music Assistant. The older /live.opus URL and browser audio element can buffer by seconds.</span></div>`;
       $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
         return `<div class="player-item"><strong>${group.name || group.id}</strong><span>Stream: ${group.stream || "none"}</span><span>${names}</span><div class="actions"><button class="secondary" data-action="use_final_stream" data-group="${safeId}">Use Mix</button><button class="secondary" data-action="use_ma_stream" data-group="${safeId}">Use MA Raw</button></div></div>`;
-      }).join("")}` : `${tapInfo}<div class="player-item"><strong>No speaker Snapcast clients connected</strong><span>Music Assistant will only show the virtual Audio Hub Mix Input until you start a Snapcast client on a phone, browser, another add-on, or speaker endpoint.</span></div>`;
+      }).join("")}` : `${tapInfo}${bufferedWarning}<div class="player-item"><strong>No speaker Snapcast clients connected</strong><span>Music Assistant will only show the virtual Audio Hub Mix Input until you start a Snapcast client on a phone, browser, another add-on, or speaker endpoint.</span></div>`;
     }
 
     function renderCaptureDevices(devices, selected) {

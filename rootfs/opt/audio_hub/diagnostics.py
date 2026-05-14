@@ -39,13 +39,20 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "bluetooth_input": "enabled" if config["wireless"]["bluetooth_enabled"] else "disabled",
         "entities": entities.health() if entities else "disabled",
     }
+    bridge_status = getattr(snapcast, "bridge_status", {}) if snapcast else {}
+    user_client_count = int(bridge_status.get("user_client_count") or 0)
+    health["low_latency_output"] = "snapcast_clients_connected" if user_client_count > 0 else "missing_snapcast_client"
+    if user_client_count == 0:
+        health["output_message"] = "Mic capture is live. Use /live.ma.mp3 for Music Assistant; /live.opus and browser audio controls can buffer by seconds."
+    else:
+        health["output_message"] = "Route the speaker group to the AudioHub stream for the mixed low-latency Snapcast output."
     return {
         "summary": f"{health['pipeline']} / {active_source}",
         "config": config,
         "health": health,
         "devices": devices,
         "bluetooth": bt,
-        "snapcast_bridge": getattr(snapcast, "bridge_status", {}) if snapcast else {},
+        "snapcast_bridge": bridge_status,
         "pulse_info": pulse_out if pulse_rc == 0 else "",
         "fifo_exists": Path("/tmp/audio-hub/snapcast.pcm").exists(),
     }
