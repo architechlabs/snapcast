@@ -470,13 +470,16 @@
 
       <article class="panel">
         <h2>Add-on Mic Monitor</h2>
-        <p>This listens inside the add-on before Snapcast, Music Assistant, and live radio.</p>
+        <p>This uses Web Audio over raw PCM, so it does not use the browser's buffered live-radio player.</p>
         <div class="actions">
-          <button id="startAddonMonitor" class="secondary">Listen Inside Add-on</button>
+          <button id="startAddonMonitor" class="secondary">Listen Low Latency</button>
           <button id="stopAddonMonitor" class="secondary">Stop Monitor</button>
           <button id="recordAddonMonitor" class="secondary">Record 3s Clip</button>
         </div>
-        <audio id="addonMonitor" controls preload="none"></audio>
+        <div class="meter">
+          <div class="meter-head"><span>Browser monitor</span><b id="addonMonitorStatus">stopped</b></div>
+          <div class="meter-track"><div id="addonMonitorFill" class="meter-fill"></div></div>
+        </div>
         <audio id="addonMonitorClip" controls preload="none"></audio>
       </article>
     </section>
@@ -549,6 +552,16 @@
 
   <script>
     const state = { status: null, apiBase: null };
+    const addonMonitor = {
+      audioContext: null,
+      processor: null,
+      websocket: null,
+      queue: [],
+      queuedSamples: 0,
+      sampleRate: 48000,
+      droppedSamples: 0,
+      lastPeak: 0,
+    };
     const $ = (id) => document.getElementById(id);
 
     function apiCandidates(path) {
@@ -752,6 +765,120 @@
       return state.apiBase !== null ? `${state.apiBase}${path}` : candidates[0];
     }
 
+    function websocketUrl(path) {
+      const url = new URL(apiUrl(path), window.location.href);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return url;
+    }
+
+    function pcm16ToFloat32(buffer) {
+      const view = new DataView(buffer);
+      const samples = new Float32Array(view.byteLength / 2);
+      let peak = 0;
+      for (let i = 0; i < samples.length; i += 1) {
+        const sample = view.getInt16(i * 2, true) / 32768;
+        samples[i] = sample;
+        peak = Math.max(peak, Math.abs(sample));
+      }
+      addonMonitor.lastPeak = peak;
+      return samples;
+    }
+
+    function trimAddonMonitorQueue() {
+      const maxQueued = Math.floor(addonMonitor.sampleRate * 0.12);
+      while (addonMonitor.queuedSamples > maxQueued && addonMonitor.queue.length > 1) {
+        const old = addonMonitor.queue.shift();
+        addonMonitor.queuedSamples -= old.length;
+        addonMonitor.droppedSamples += old.length;
+      }
+    }
+
+    function stopAddonMonitor() {
+      if (addonMonitor.websocket) {
+        addonMonitor.websocket.close();
+        addonMonitor.websocket = null;
+      }
+      if (addonMonitor.processor) {
+        addonMonitor.processor.disconnect();
+        addonMonitor.processor = null;
+      }
+      if (addonMonitor.audioContext) {
+        addonMonitor.audioContext.close().catch(() => {});
+        addonMonitor.audioContext = null;
+      }
+      addonMonitor.queue = [];
+      addonMonitor.queuedSamples = 0;
+      $("addonMonitorStatus").textContent = "stopped";
+      $("addonMonitorFill").style.width = "0%";
+    }
+
+    async function startAddonMonitor() {
+      stopAddonMonitor();
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) {
+        $("addonMonitorStatus").textContent = "Web Audio unsupported";
+        return;
+      }
+      const context = new AudioCtx({ latencyHint: "interactive", sampleRate: 48000 });
+      addonMonitor.audioContext = context;
+      addonMonitor.sampleRate = Math.round(context.sampleRate);
+      addonMonitor.queue = [];
+      addonMonitor.queuedSamples = 0;
+      addonMonitor.droppedSamples = 0;
+
+      const processor = context.createScriptProcessor(512, 0, 1);
+      addonMonitor.processor = processor;
+      processor.onaudioprocess = (event) => {
+        const output = event.outputBuffer.getChannelData(0);
+        let offset = 0;
+        while (offset < output.length && addonMonitor.queue.length) {
+          const chunk = addonMonitor.queue[0];
+          const take = Math.min(chunk.length, output.length - offset);
+          output.set(chunk.subarray(0, take), offset);
+          offset += take;
+          addonMonitor.queuedSamples -= take;
+          if (take === chunk.length) {
+            addonMonitor.queue.shift();
+          } else {
+            addonMonitor.queue[0] = chunk.subarray(take);
+          }
+        }
+        if (offset < output.length) output.fill(0, offset);
+      };
+      processor.connect(context.destination);
+      await context.resume();
+
+      const url = websocketUrl(`/api/mic-monitor.ws?rate=${addonMonitor.sampleRate}&t=${Date.now()}`);
+      const websocket = new WebSocket(url);
+      websocket.binaryType = "arraybuffer";
+      addonMonitor.websocket = websocket;
+      $("addonMonitorStatus").textContent = "connecting";
+
+      websocket.onmessage = (event) => {
+        if (typeof event.data === "string") {
+          $("addonMonitorStatus").textContent = "live";
+          return;
+        }
+        const samples = pcm16ToFloat32(event.data);
+        addonMonitor.queue.push(samples);
+        addonMonitor.queuedSamples += samples.length;
+        trimAddonMonitorQueue();
+        const queuedMs = Math.round((addonMonitor.queuedSamples / addonMonitor.sampleRate) * 1000);
+        const droppedMs = Math.round((addonMonitor.droppedSamples / addonMonitor.sampleRate) * 1000);
+        $("addonMonitorStatus").textContent = `live ${queuedMs}ms queue / dropped ${droppedMs}ms`;
+        $("addonMonitorFill").style.width = `${Math.min(100, Math.round(addonMonitor.lastPeak * 180))}%`;
+      };
+      websocket.onclose = () => {
+        if (addonMonitor.websocket === websocket) {
+          $("addonMonitorStatus").textContent = "stopped";
+          addonMonitor.websocket = null;
+        }
+      };
+      websocket.onerror = () => {
+        $("addonMonitorStatus").textContent = "monitor error";
+      };
+    }
+
     async function patchConfig(payload) {
       $("subtitle").textContent = "Applying changes";
       state.status = await api("/api/config", { method: "PATCH", body: JSON.stringify(payload) });
@@ -787,20 +914,11 @@
       await refreshLevel();
     });
     $("startAddonMonitor").addEventListener("click", async () => {
-      const monitor = $("addonMonitor");
-      monitor.pause();
-      monitor.src = `${apiUrl("/api/live.wav")}?tap=addon-monitor&t=${Date.now()}`;
-      monitor.load();
-      $("subtitle").textContent = "Listening before Snapcast / Music Assistant";
-      await monitor.play().catch((err) => {
-        $("subtitle").textContent = `Press play on Add-on Mic Monitor: ${err.message}`;
-      });
+      $("subtitle").textContent = "Starting low-latency add-on monitor";
+      await startAddonMonitor();
     });
     $("stopAddonMonitor").addEventListener("click", () => {
-      const monitor = $("addonMonitor");
-      monitor.pause();
-      monitor.removeAttribute("src");
-      monitor.load();
+      stopAddonMonitor();
       $("subtitle").textContent = "Add-on mic monitor stopped";
     });
     $("recordAddonMonitor").addEventListener("click", async () => {

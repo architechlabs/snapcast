@@ -56,6 +56,50 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     async def live_opus_stream(request):
         return await live_encoded_stream(request, "opus")
 
+    async def mic_monitor_ws(request):
+        websocket = web.WebSocketResponse(heartbeat=20)
+        await websocket.prepare(request)
+        try:
+            rate = int(request.query.get("rate", "48000"))
+        except ValueError:
+            rate = 48000
+        rate = max(8000, min(96000, rate))
+        proc = await asyncio.create_subprocess_exec(
+            "parec",
+            "-d",
+            "snap_hub_mix.monitor",
+            "--latency-msec=5",
+            "--process-time-msec=5",
+            "--raw",
+            "--format=s16le",
+            "--rate",
+            str(rate),
+            "--channels=1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+            env={**PULSE_ENV, "PULSE_LATENCY_MSEC": "5"},
+        )
+        chunk_bytes = max(320, rate // 100 * 2)
+        try:
+            await websocket.send_json({"type": "start", "rate": rate, "channels": 1, "format": "s16le"})
+            while proc.stdout and not websocket.closed:
+                chunk = await proc.stdout.read(chunk_bytes)
+                if not chunk:
+                    break
+                await websocket.send_bytes(chunk)
+        except (ConnectionResetError, asyncio.CancelledError):
+            pass
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=2)
+                except TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+            await websocket.close()
+        return websocket
+
     async def live_raw_stream(request):
         response = web.StreamResponse(
             status=200,
@@ -256,6 +300,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_get("/api/live.opus", live_opus_stream)
     app.router.add_get("/{prefix:.+}/api/live.opus", live_opus_stream)
+    app.router.add_get("/api/mic-monitor.ws", mic_monitor_ws)
+    app.router.add_get("/{prefix:.+}/api/mic-monitor.ws", mic_monitor_ws)
     app.router.add_get("/api/live.raw", live_raw_stream)
     app.router.add_get("/{prefix:.+}/api/live.raw", live_raw_stream)
     app.router.add_get("/api/live.wav", live_wav_stream)

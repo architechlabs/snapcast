@@ -28,7 +28,7 @@ DEFAULTS: dict[str, Any] = {
         "device": "auto",
         "profile": "line_in",
         "capture_backend": "auto",
-        "latency_ms": 8,
+        "latency_ms": 4,
         "volume": 0.9,
         "mute": False,
     },
@@ -106,7 +106,7 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     config["audio"]["keepalive_silence"] = bool(config["audio"].get("keepalive_silence", False))
     config["wired"]["volume"] = clamp(float(config["wired"]["volume"]), 0.0, 2.0)
     config["wired"]["latency_ms"] = int(config["wired"].get("latency_ms", 15))
-    config["wired"]["latency_ms"] = max(8, min(config["wired"]["latency_ms"], 80))
+    config["wired"]["latency_ms"] = max(2, min(config["wired"]["latency_ms"], 80))
     if config["wired"].get("capture_backend") not in ("auto", "direct_alsa", "haos_pulse"):
         config["wired"]["capture_backend"] = "auto"
     config["network"]["volume"] = clamp(float(config["network"]["volume"]), 0.0, 2.0)
@@ -128,6 +128,7 @@ def normalize(config: dict[str, Any]) -> dict[str, Any]:
     if config["music_assistant"]["low_latency_mode"]:
         config["audio"]["latency_ms"] = 10
         config["audio"]["buffer_ms"] = 40
+        config["wired"]["latency_ms"] = min(config["wired"]["latency_ms"], 4)
         config["snapcast"]["buffer_ms"] = 20
         config["snapcast"]["chunk_ms"] = 2
     for key, (old_port, new_port) in SNAPCAST_PORT_MIGRATIONS.items():

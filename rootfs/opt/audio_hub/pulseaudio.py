@@ -511,15 +511,16 @@ class PulseAudioManager:
         cfg = self.config
         rate = int(cfg["audio"]["sample_rate"])
         channels = int(cfg["audio"]["channels"])
-        latency = max(5, min(20, int(cfg["wired"].get("latency_ms", 8))))
-        period_us = max(2500, latency * 1000 // 2)
-        buffer_us = max(10000, latency * 1000 * 2)
+        latency = max(2, min(20, int(cfg["wired"].get("latency_ms", 4))))
+        pulse_latency = max(2, min(5, latency))
+        period_us = max(1000, latency * 1000 // 2)
+        buffer_us = max(4000, latency * 1000 * 2)
         command = (
             f"arecord -q -D {shlex.quote(device)} -t raw -f S16_LE -r {rate} -c {channels} "
             f"--period-time={period_us} --buffer-time={buffer_us} "
-            f"| PULSE_SERVER={shlex.quote(PULSE_ENV['PULSE_SERVER'])} PULSE_LATENCY_MSEC=5 "
+            f"| PULSE_SERVER={shlex.quote(PULSE_ENV['PULSE_SERVER'])} PULSE_LATENCY_MSEC={pulse_latency} "
             f"PULSE_PROP='media.role=phone application.name=wired_alsa_bridge' "
-            f"pacat --latency-msec=5 --process-time-msec=5 --raw --format=s16le --rate={rate} --channels={channels} -d snap_hub_mix"
+            f"pacat --latency-msec={pulse_latency} --process-time-msec=1 --raw --format=s16le --rate={rate} --channels={channels} -d snap_hub_mix"
         )
         bridge = ManagedProcess(
             "wired-alsa-bridge",
