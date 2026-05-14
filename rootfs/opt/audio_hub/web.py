@@ -19,7 +19,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     static_root = Path("/var/www/audio_hub")
 
     async def index(request):
-        return web.FileResponse(static_root / "index.html")
+        return web.FileResponse(static_root / "index.html", headers=no_store_headers())
 
     async def status(request):
         return web.json_response(await status_provider())

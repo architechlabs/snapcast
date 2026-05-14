@@ -473,8 +473,7 @@
           <code id="liveUrl">Loading live URL...</code>
           <button id="copyLiveUrl" class="secondary">Copy</button>
         </div>
-        <p>Buffered Music Assistant live-radio URL. Do not use this player for delay testing.</p>
-        <audio id="livePreview" controls preload="none"></audio>
+        <p>Buffered Music Assistant live-radio URL. Use it only in Music Assistant, not for local latency testing.</p>
       </article>
 
       <article class="panel">
@@ -693,11 +692,7 @@
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
       const permanentLiveUrl = `http://${window.location.hostname}:41888/live.opus`;
-      const previewUrl = apiUrl("/api/live.opus");
       $("liveUrl").textContent = permanentLiveUrl;
-      if ($("livePreview").src !== new URL(previewUrl, window.location.href).href) {
-        $("livePreview").src = previewUrl;
-      }
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
       const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
