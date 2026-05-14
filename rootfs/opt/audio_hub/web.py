@@ -54,6 +54,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return await live_encoded_stream(request, "mp3")
 
     async def live_ma_stream(request):
+        return await live_wav_stream(request)
+
+    async def live_ma_mp3_stream(request):
         return await live_encoded_stream(request, "ma_mp3")
 
     async def live_opus_stream(request):
@@ -328,8 +331,10 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/latency-report", latency_report)
     app.router.add_get("/api/monitor.wav", monitor_clip)
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
-    app.router.add_get("/api/live.ma.mp3", live_ma_stream)
-    app.router.add_get("/{prefix:.+}/api/live.ma.mp3", live_ma_stream)
+    app.router.add_get("/api/live.ma.wav", live_ma_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.wav", live_ma_stream)
+    app.router.add_get("/api/live.ma.mp3", live_ma_mp3_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.mp3", live_ma_mp3_stream)
     app.router.add_get("/api/live.mp3", live_stream)
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_get("/api/live.opus", live_opus_stream)
@@ -340,7 +345,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.raw", live_raw_stream)
     app.router.add_get("/api/live.wav", live_wav_stream)
     app.router.add_get("/{prefix:.+}/api/live.wav", live_wav_stream)
-    app.router.add_get("/live.ma.mp3", live_ma_stream)
+    app.router.add_get("/live.ma.wav", live_ma_stream)
+    app.router.add_get("/live.ma.mp3", live_ma_mp3_stream)
     app.router.add_get("/live.mp3", live_stream)
     app.router.add_get("/live.opus", live_opus_stream)
     app.router.add_get("/live.raw", live_raw_stream)

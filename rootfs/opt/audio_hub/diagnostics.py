@@ -41,9 +41,9 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
     }
     bridge_status = getattr(snapcast, "bridge_status", {}) if snapcast else {}
     user_client_count = int(bridge_status.get("user_client_count") or 0)
-    health["low_latency_output"] = "snapcast_clients_connected" if user_client_count > 0 else "missing_snapcast_client"
+    health["low_latency_output"] = "snapcast_output" if user_client_count > 0 else "ma_http_stream"
     if user_client_count == 0:
-        health["output_message"] = "Mic capture is live. Use /live.ma.mp3 for Music Assistant; /live.opus and browser audio controls can buffer by seconds."
+        health["output_message"] = "Mic capture is live. Use /live.ma.wav for Music Assistant; MP3/Opus/browser controls can add quality loss or buffering."
     else:
         health["output_message"] = "Route the speaker group to the AudioHub stream for the mixed low-latency Snapcast output."
     return {

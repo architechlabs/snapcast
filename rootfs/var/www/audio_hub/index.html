@@ -698,7 +698,7 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.mp3`;
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.wav`;
       $("liveUrl").textContent = permanentLiveUrl;
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
@@ -706,7 +706,7 @@
       const userGroups = groups.filter((group) => !group.internal_tap);
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
-      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now low-latency MP3</strong><span>The green meter is pre-output and live. Use the copied /live.ma.mp3 URL in Music Assistant. The older /live.opus URL and browser audio element can buffer by seconds.</span></div>`;
+      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now lossless WAV</strong><span>The green meter is pre-output and live. Use the copied /live.ma.wav URL in Music Assistant. It avoids MP3/Opus encoder damage; if it still delays, MA/player buffering is downstream of the add-on mixer.</span></div>`;
       $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
