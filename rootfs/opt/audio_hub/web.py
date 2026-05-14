@@ -54,6 +54,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return await live_encoded_stream(request, "mp3")
 
     async def live_ma_stream(request):
+        return await live_encoded_stream(request, "ma_flac")
+
+    async def live_ma_wav_stream(request):
         return await live_wav_stream(request)
 
     async def live_ma_mp3_stream(request):
@@ -69,7 +72,12 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             rate = int(request.query.get("rate", "48000"))
         except ValueError:
             rate = 48000
+        try:
+            channels = int(request.query.get("channels", "2"))
+        except ValueError:
+            channels = 2
         rate = max(8000, min(96000, rate))
+        channels = max(1, min(2, channels))
         proc = await asyncio.create_subprocess_exec(
             "parec",
             "-d",
@@ -80,14 +88,14 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "--format=s16le",
             "--rate",
             str(rate),
-            "--channels=1",
+            f"--channels={channels}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
             env={**PULSE_ENV, "PULSE_LATENCY_MSEC": "5"},
         )
-        chunk_bytes = max(320, rate // 100 * 2)
+        chunk_bytes = max(320, rate // 100 * 2 * channels)
         try:
-            await websocket.send_json({"type": "start", "rate": rate, "channels": 1, "format": "s16le"})
+            await websocket.send_json({"type": "start", "rate": rate, "channels": channels, "format": "s16le"})
             while proc.stdout and not websocket.closed:
                 chunk = await proc.stdout.read(chunk_bytes)
                 if not chunk:
@@ -196,7 +204,12 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return response
 
     async def live_encoded_stream(request, codec: str):
-        content_type = "audio/mpeg" if codec in ("mp3", "ma_mp3") else "audio/ogg; codecs=opus"
+        if codec == "ma_flac":
+            content_type = "audio/flac"
+        elif codec in ("mp3", "ma_mp3"):
+            content_type = "audio/mpeg"
+        else:
+            content_type = "audio/ogg; codecs=opus"
         response = web.StreamResponse(
             status=200,
             headers={
@@ -218,7 +231,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             stderr=asyncio.subprocess.DEVNULL,
             env=PULSE_ENV,
         )
-        read_size = 384 if codec == "ma_mp3" else (1024 if codec == "mp3" else 1024)
+        read_size = 768 if codec == "ma_flac" else (384 if codec == "ma_mp3" else 1024)
         try:
             while proc.stdout:
                 chunk = await proc.stdout.read(read_size)
@@ -286,6 +299,21 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
                 "mp3",
                 "-",
             ]
+        if codec == "ma_flac":
+            return [
+                *base,
+                "-codec:a",
+                "flac",
+                "-compression_level",
+                "0",
+                "-flush_packets",
+                "1",
+                "-max_delay",
+                "0",
+                "-f",
+                "flac",
+                "-",
+            ]
         if codec == "opus":
             return [
                 *base,
@@ -331,8 +359,10 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/latency-report", latency_report)
     app.router.add_get("/api/monitor.wav", monitor_clip)
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
-    app.router.add_get("/api/live.ma.wav", live_ma_stream)
-    app.router.add_get("/{prefix:.+}/api/live.ma.wav", live_ma_stream)
+    app.router.add_get("/api/live.ma.flac", live_ma_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.flac", live_ma_stream)
+    app.router.add_get("/api/live.ma.wav", live_ma_wav_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.wav", live_ma_wav_stream)
     app.router.add_get("/api/live.ma.mp3", live_ma_mp3_stream)
     app.router.add_get("/{prefix:.+}/api/live.ma.mp3", live_ma_mp3_stream)
     app.router.add_get("/api/live.mp3", live_stream)
@@ -345,7 +375,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.raw", live_raw_stream)
     app.router.add_get("/api/live.wav", live_wav_stream)
     app.router.add_get("/{prefix:.+}/api/live.wav", live_wav_stream)
-    app.router.add_get("/live.ma.wav", live_ma_stream)
+    app.router.add_get("/live.ma.flac", live_ma_stream)
+    app.router.add_get("/live.ma.wav", live_ma_wav_stream)
     app.router.add_get("/live.ma.mp3", live_ma_mp3_stream)
     app.router.add_get("/live.mp3", live_stream)
     app.router.add_get("/live.opus", live_opus_stream)
