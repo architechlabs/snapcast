@@ -562,6 +562,7 @@
     const addonMonitor = {
       audioContext: null,
       processor: null,
+      workletUrl: null,
       websocket: null,
       queue: [],
       queuedSamples: 0,
@@ -699,7 +700,7 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.flac`;
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.aac`;
       $("liveUrl").textContent = permanentLiveUrl;
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
@@ -707,7 +708,7 @@
       const userGroups = groups.filter((group) => !group.internal_tap);
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
-      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now lossless FLAC</strong><span>The green meter is pre-output and live. Use the copied /live.ma.flac URL in Music Assistant. FLAC keeps quality without the huge WAV stream or lossy MP3/Opus path.</span></div>`;
+      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now low-latency AAC</strong><span>The green meter is pre-output and live. Use the copied /live.ma.aac URL in Music Assistant. FLAC and WAV fallbacks remain available if AAC is not accepted.</span></div>`;
       $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
@@ -795,6 +796,83 @@
       return { left, right, length: frameCount, offset: 0 };
     }
 
+    async function createAddonMonitorWorklet(context) {
+      const source = `
+        class AudioHubMonitorProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.queue = [];
+            this.queuedSamples = 0;
+            this.droppedSamples = 0;
+            this.maxQueued = Math.floor(sampleRate * 0.16);
+            this.started = false;
+            this.lastReport = 0;
+            this.port.onmessage = (event) => {
+              const data = event.data || {};
+              if (data.type === "chunk") {
+                this.queue.push({ left: data.left, right: data.right || data.left, offset: 0, length: data.left.length });
+                this.queuedSamples += data.left.length;
+                this.started = this.started || this.queuedSamples >= Math.floor(sampleRate * 0.025);
+                while (this.queuedSamples > this.maxQueued && this.queue.length > 1) {
+                  const old = this.queue.shift();
+                  const remaining = old.length - old.offset;
+                  this.queuedSamples -= remaining;
+                  this.droppedSamples += remaining;
+                }
+              } else if (data.type === "reset") {
+                this.queue = [];
+                this.queuedSamples = 0;
+                this.droppedSamples = 0;
+                this.started = false;
+              }
+            };
+          }
+
+          process(inputs, outputs) {
+            const output = outputs[0];
+            const leftOut = output[0];
+            const rightOut = output[1] || output[0];
+            let offset = 0;
+            if (!this.started) {
+              leftOut.fill(0);
+              rightOut.fill(0);
+              return true;
+            }
+            while (offset < leftOut.length && this.queue.length) {
+              const chunk = this.queue[0];
+              const take = Math.min(chunk.length - chunk.offset, leftOut.length - offset);
+              leftOut.set(chunk.left.subarray(chunk.offset, chunk.offset + take), offset);
+              rightOut.set(chunk.right.subarray(chunk.offset, chunk.offset + take), offset);
+              offset += take;
+              this.queuedSamples -= take;
+              chunk.offset += take;
+              if (chunk.offset >= chunk.length) this.queue.shift();
+            }
+            if (offset < leftOut.length) {
+              leftOut.fill(0, offset);
+              rightOut.fill(0, offset);
+              this.started = false;
+            }
+            if (currentTime - this.lastReport > 0.25) {
+              this.lastReport = currentTime;
+              this.port.postMessage({
+                type: "status",
+                queuedMs: Math.round(this.queuedSamples / sampleRate * 1000),
+                droppedMs: Math.round(this.droppedSamples / sampleRate * 1000)
+              });
+            }
+            return true;
+          }
+        }
+        registerProcessor("audio-hub-monitor", AudioHubMonitorProcessor);
+      `;
+      const blob = new Blob([source], { type: "application/javascript" });
+      const url = URL.createObjectURL(blob);
+      addonMonitor.workletUrl = url;
+      await context.audioWorklet.addModule(url);
+      return new AudioWorkletNode(context, "audio-hub-monitor", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2] });
+    }
+
     function trimAddonMonitorQueue() {
       const maxQueued = Math.floor(addonMonitor.sampleRate * 0.2);
       while (addonMonitor.queuedSamples > maxQueued && addonMonitor.queue.length > 1) {
@@ -813,6 +891,10 @@
       if (addonMonitor.processor) {
         addonMonitor.processor.disconnect();
         addonMonitor.processor = null;
+      }
+      if (addonMonitor.workletUrl) {
+        URL.revokeObjectURL(addonMonitor.workletUrl);
+        addonMonitor.workletUrl = null;
       }
       if (addonMonitor.audioContext) {
         addonMonitor.audioContext.close().catch(() => {});
@@ -840,33 +922,12 @@
       addonMonitor.queuedSamples = 0;
       addonMonitor.droppedSamples = 0;
 
-      const processor = context.createScriptProcessor(1024, 0, 2);
+      const processor = await createAddonMonitorWorklet(context);
       addonMonitor.processor = processor;
-      processor.onaudioprocess = (event) => {
-        const leftOut = event.outputBuffer.getChannelData(0);
-        const rightOut = event.outputBuffer.numberOfChannels > 1 ? event.outputBuffer.getChannelData(1) : leftOut;
-        let offset = 0;
-        const minStart = Math.floor(addonMonitor.sampleRate * 0.035);
-        if (addonMonitor.queuedSamples < minStart) {
-          leftOut.fill(0);
-          rightOut.fill(0);
-          return;
-        }
-        while (offset < leftOut.length && addonMonitor.queue.length) {
-          const chunk = addonMonitor.queue[0];
-          const take = Math.min(chunk.length - chunk.offset, leftOut.length - offset);
-          leftOut.set(chunk.left.subarray(chunk.offset, chunk.offset + take), offset);
-          rightOut.set(chunk.right.subarray(chunk.offset, chunk.offset + take), offset);
-          offset += take;
-          addonMonitor.queuedSamples -= take;
-          chunk.offset += take;
-          if (chunk.offset >= chunk.length) {
-            addonMonitor.queue.shift();
-          }
-        }
-        if (offset < leftOut.length) {
-          leftOut.fill(0, offset);
-          rightOut.fill(0, offset);
+      processor.port.onmessage = (event) => {
+        const data = event.data || {};
+        if (data.type === "status") {
+          $("addonMonitorStatus").textContent = `live ${data.queuedMs}ms queue / dropped ${data.droppedMs}ms`;
         }
       };
       processor.connect(context.destination);
@@ -888,12 +949,7 @@
           return;
         }
         const samples = pcm16ToFloat32(event.data, addonMonitor.channels);
-        addonMonitor.queue.push(samples);
-        addonMonitor.queuedSamples += samples.length;
-        trimAddonMonitorQueue();
-        const queuedMs = Math.round((addonMonitor.queuedSamples / addonMonitor.sampleRate) * 1000);
-        const droppedMs = Math.round((addonMonitor.droppedSamples / addonMonitor.sampleRate) * 1000);
-        $("addonMonitorStatus").textContent = `live ${queuedMs}ms queue / dropped ${droppedMs}ms`;
+        processor.port.postMessage({ type: "chunk", left: samples.left, right: samples.right }, [samples.left.buffer, samples.right.buffer]);
         $("addonMonitorFill").style.width = `${Math.min(100, Math.round(addonMonitor.lastPeak * 180))}%`;
       };
       websocket.onclose = () => {
