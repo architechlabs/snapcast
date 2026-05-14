@@ -91,7 +91,7 @@ class PulseAudioManager:
                 "WhatIsWrongWithSystemWide",
                 "disallow-module-loading",
             ],
-        )
+        )        
         self.processes["pulseaudio"] = pulse
         await pulse.start()
         await self._wait_ready()
