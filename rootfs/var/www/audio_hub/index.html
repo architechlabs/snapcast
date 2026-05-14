@@ -461,24 +461,27 @@
       <article class="panel">
         <h2>Players / Groups</h2>
         <div id="playerList" class="player-list"></div>
+        <div class="meter">
+          <div class="meter-head"><span>Low-latency add-on monitor</span><b id="addonMonitorStatus">stopped</b></div>
+          <div class="meter-track"><div id="addonMonitorFill" class="meter-fill"></div></div>
+        </div>
+        <div class="actions">
+          <button id="startAddonMonitor" class="secondary">Listen Inside Add-on</button>
+          <button id="stopAddonMonitor" class="secondary">Stop Monitor</button>
+        </div>
         <div class="copyline">
           <code id="liveUrl">Loading live URL...</code>
           <button id="copyLiveUrl" class="secondary">Copy</button>
         </div>
+        <p>Buffered Music Assistant live-radio URL. Do not use this player for delay testing.</p>
         <audio id="livePreview" controls preload="none"></audio>
       </article>
 
       <article class="panel">
-        <h2>Add-on Mic Monitor</h2>
-        <p>This uses Web Audio over raw PCM, so it does not use the browser's buffered live-radio player.</p>
+        <h2>Diagnostic Clip</h2>
+        <p>This records inside the add-on before Snapcast, Music Assistant, and live radio.</p>
         <div class="actions">
-          <button id="startAddonMonitor" class="secondary">Listen Low Latency</button>
-          <button id="stopAddonMonitor" class="secondary">Stop Monitor</button>
           <button id="recordAddonMonitor" class="secondary">Record 3s Clip</button>
-        </div>
-        <div class="meter">
-          <div class="meter-head"><span>Browser monitor</span><b id="addonMonitorStatus">stopped</b></div>
-          <div class="meter-track"><div id="addonMonitorFill" class="meter-fill"></div></div>
         </div>
         <audio id="addonMonitorClip" controls preload="none"></audio>
       </article>
