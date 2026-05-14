@@ -467,6 +467,18 @@
         </div>
         <audio id="livePreview" controls preload="none"></audio>
       </article>
+
+      <article class="panel">
+        <h2>Add-on Mic Monitor</h2>
+        <p>This listens inside the add-on before Snapcast, Music Assistant, and live radio.</p>
+        <div class="actions">
+          <button id="startAddonMonitor" class="secondary">Listen Inside Add-on</button>
+          <button id="stopAddonMonitor" class="secondary">Stop Monitor</button>
+          <button id="recordAddonMonitor" class="secondary">Record 3s Clip</button>
+        </div>
+        <audio id="addonMonitor" controls preload="none"></audio>
+        <audio id="addonMonitorClip" controls preload="none"></audio>
+      </article>
     </section>
 
     <section id="advancedView" class="grid hidden">
@@ -773,6 +785,30 @@
       clip.load();
       setTimeout(() => clip.play().catch(() => {}), 3600);
       await refreshLevel();
+    });
+    $("startAddonMonitor").addEventListener("click", async () => {
+      const monitor = $("addonMonitor");
+      monitor.pause();
+      monitor.src = `${apiUrl("/api/live.wav")}?tap=addon-monitor&t=${Date.now()}`;
+      monitor.load();
+      $("subtitle").textContent = "Listening before Snapcast / Music Assistant";
+      await monitor.play().catch((err) => {
+        $("subtitle").textContent = `Press play on Add-on Mic Monitor: ${err.message}`;
+      });
+    });
+    $("stopAddonMonitor").addEventListener("click", () => {
+      const monitor = $("addonMonitor");
+      monitor.pause();
+      monitor.removeAttribute("src");
+      monitor.load();
+      $("subtitle").textContent = "Add-on mic monitor stopped";
+    });
+    $("recordAddonMonitor").addEventListener("click", async () => {
+      const clip = $("addonMonitorClip");
+      $("subtitle").textContent = "Recording pre-Snapcast add-on monitor clip";
+      clip.src = `${apiUrl("/api/monitor.wav")}?tap=addon-monitor&t=${Date.now()}`;
+      clip.load();
+      setTimeout(() => clip.play().catch(() => {}), 3600);
     });
     $("routingMode").addEventListener("change", (event) => patchConfig({ audio: { routing_mode: event.target.value } }));
     $("latency").addEventListener("input", (event) => $("latencyValue").textContent = `${event.target.value} ms`);
