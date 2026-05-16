@@ -65,6 +65,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     async def live_ma_mp3_stream(request):
         return await live_encoded_stream(request, "ma_mp3")
 
+    async def live_ma_raw_stream(request):
+        return await live_raw_stream(request)
+
     async def live_opus_stream(request):
         return await live_encoded_stream(request, "opus")
 
@@ -136,7 +139,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             "--latency-msec=5",
             "--process-time-msec=5",
             "--raw",
-            "--format=s16le",
+            "--format=s16be",
             "--rate=48000",
             "--channels=2",
             stdout=asyncio.subprocess.PIPE,
@@ -393,6 +396,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/live.ma.wav", live_ma_wav_stream)
     app.router.add_get("/api/live.ma.mp3", live_ma_mp3_stream)
     app.router.add_get("/{prefix:.+}/api/live.ma.mp3", live_ma_mp3_stream)
+    app.router.add_get("/api/live.ma.raw", live_ma_raw_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.raw", live_ma_raw_stream)
     app.router.add_get("/api/live.mp3", live_stream)
     app.router.add_get("/{prefix:.+}/api/live.mp3", live_stream)
     app.router.add_get("/api/live.opus", live_opus_stream)
@@ -407,6 +412,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/live.ma.flac", live_ma_flac_stream)
     app.router.add_get("/live.ma.wav", live_ma_wav_stream)
     app.router.add_get("/live.ma.mp3", live_ma_mp3_stream)
+    app.router.add_get("/live.ma.raw", live_ma_raw_stream)
     app.router.add_get("/live.mp3", live_stream)
     app.router.add_get("/live.opus", live_opus_stream)
     app.router.add_get("/live.raw", live_raw_stream)

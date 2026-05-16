@@ -478,7 +478,7 @@
           <code id="liveUrl">Loading live URL...</code>
           <button id="copyLiveUrl" class="secondary">Copy</button>
         </div>
-        <p>Buffered Music Assistant live-radio URL. Use it only in Music Assistant, not for local latency testing.</p>
+        <p>Lowest-delay Music Assistant URL. Fallbacks: /live.ma.aac, /live.ma.flac, /live.ma.wav.</p>
       </article>
 
       <article class="panel">
@@ -570,6 +570,7 @@
       channels: 2,
       droppedSamples: 0,
       lastPeak: 0,
+      gain: 2.25,
     };
     const $ = (id) => document.getElementById(id);
 
@@ -700,7 +701,7 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.aac`;
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.raw`;
       $("liveUrl").textContent = permanentLiveUrl;
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
@@ -708,7 +709,7 @@
       const userGroups = groups.filter((group) => !group.internal_tap);
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
-      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now low-latency AAC</strong><span>The green meter is pre-output and live. Use the copied /live.ma.aac URL in Music Assistant. FLAC and WAV fallbacks remain available if AAC is not accepted.</span></div>`;
+      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now raw low-latency PCM</strong><span>The copied /live.ma.raw URL avoids encoder delay. If Music Assistant rejects raw PCM, use /live.ma.aac first, then /live.ma.flac or /live.ma.wav as fallbacks.</span></div>`;
       $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
@@ -807,6 +808,7 @@
             this.maxQueued = Math.floor(sampleRate * 0.16);
             this.started = false;
             this.lastReport = 0;
+            this.gain = 2.25;
             this.port.onmessage = (event) => {
               const data = event.data || {};
               if (data.type === "chunk") {
@@ -824,8 +826,14 @@
                 this.queuedSamples = 0;
                 this.droppedSamples = 0;
                 this.started = false;
+              } else if (data.type === "gain") {
+                this.gain = Math.max(0.25, Math.min(6, Number(data.gain) || 1));
               }
             };
+          }
+
+          shape(sample) {
+            return Math.tanh(sample * this.gain);
           }
 
           process(inputs, outputs) {
@@ -841,8 +849,10 @@
             while (offset < leftOut.length && this.queue.length) {
               const chunk = this.queue[0];
               const take = Math.min(chunk.length - chunk.offset, leftOut.length - offset);
-              leftOut.set(chunk.left.subarray(chunk.offset, chunk.offset + take), offset);
-              rightOut.set(chunk.right.subarray(chunk.offset, chunk.offset + take), offset);
+              for (let idx = 0; idx < take; idx += 1) {
+                leftOut[offset + idx] = this.shape(chunk.left[chunk.offset + idx]);
+                rightOut[offset + idx] = this.shape(chunk.right[chunk.offset + idx]);
+              }
               offset += take;
               this.queuedSamples -= take;
               chunk.offset += take;
@@ -924,6 +934,7 @@
 
       const processor = await createAddonMonitorWorklet(context);
       addonMonitor.processor = processor;
+      processor.port.postMessage({ type: "gain", gain: addonMonitor.gain });
       processor.port.onmessage = (event) => {
         const data = event.data || {};
         if (data.type === "status") {
