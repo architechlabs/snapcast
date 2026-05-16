@@ -43,7 +43,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
     user_client_count = int(bridge_status.get("user_client_count") or 0)
     health["low_latency_output"] = "snapcast_output" if user_client_count > 0 else "ma_http_stream"
     if user_client_count == 0:
-        health["output_message"] = "Mic capture is live. Use /live.ma.raw for the lowest-delay Music Assistant stream; /live.ma.aac, /live.ma.flac, and /live.ma.wav remain available as fallbacks."
+        health["output_message"] = "Mic capture is live. Use /live.ma.aac for Music Assistant. If your MA build prefers transport streams, try /live.ma.ts. Raw PCM is diagnostics-only and may not be accepted by MA."
     else:
         health["output_message"] = "Route the speaker group to the AudioHub stream for the mixed low-latency Snapcast output."
     return {

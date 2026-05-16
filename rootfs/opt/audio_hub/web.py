@@ -56,6 +56,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     async def live_ma_stream(request):
         return await live_encoded_stream(request, "ma_aac")
 
+    async def live_ma_ts_stream(request):
+        return await live_encoded_stream(request, "ma_ts")
+
     async def live_ma_wav_stream(request):
         return await live_wav_stream(request)
 
@@ -210,7 +213,9 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
         return response
 
     async def live_encoded_stream(request, codec: str):
-        if codec == "ma_aac":
+        if codec == "ma_ts":
+            content_type = "video/mp2t"
+        elif codec == "ma_aac":
             content_type = "audio/aac"
         elif codec == "ma_flac":
             content_type = "audio/flac"
@@ -239,7 +244,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
             stderr=asyncio.subprocess.DEVNULL,
             env=PULSE_ENV,
         )
-        read_size = 512 if codec == "ma_aac" else (768 if codec == "ma_flac" else (384 if codec == "ma_mp3" else 1024))
+        read_size = 1316 if codec == "ma_ts" else (512 if codec == "ma_aac" else (768 if codec == "ma_flac" else (384 if codec == "ma_mp3" else 1024)))
         try:
             while proc.stdout:
                 chunk = await proc.stdout.read(read_size)
@@ -328,6 +333,29 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
                 "adts",
                 "-",
             ]
+        if codec == "ma_ts":
+            return [
+                *base,
+                "-codec:a",
+                "aac",
+                "-profile:a",
+                "aac_low",
+                "-b:a",
+                "192k",
+                "-flush_packets",
+                "1",
+                "-max_delay",
+                "0",
+                "-muxdelay",
+                "0",
+                "-muxpreload",
+                "0",
+                "-mpegts_flags",
+                "resend_headers",
+                "-f",
+                "mpegts",
+                "-",
+            ]
         if codec == "ma_flac":
             return [
                 *base,
@@ -390,6 +418,8 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/{prefix:.+}/api/monitor.wav", monitor_clip)
     app.router.add_get("/api/live.ma.aac", live_ma_stream)
     app.router.add_get("/{prefix:.+}/api/live.ma.aac", live_ma_stream)
+    app.router.add_get("/api/live.ma.ts", live_ma_ts_stream)
+    app.router.add_get("/{prefix:.+}/api/live.ma.ts", live_ma_ts_stream)
     app.router.add_get("/api/live.ma.flac", live_ma_flac_stream)
     app.router.add_get("/{prefix:.+}/api/live.ma.flac", live_ma_flac_stream)
     app.router.add_get("/api/live.ma.wav", live_ma_wav_stream)
@@ -409,6 +439,7 @@ def create_app(status_provider: StatusProvider, patch_handler: PatchHandler, res
     app.router.add_get("/api/live.wav", live_wav_stream)
     app.router.add_get("/{prefix:.+}/api/live.wav", live_wav_stream)
     app.router.add_get("/live.ma.aac", live_ma_stream)
+    app.router.add_get("/live.ma.ts", live_ma_ts_stream)
     app.router.add_get("/live.ma.flac", live_ma_flac_stream)
     app.router.add_get("/live.ma.wav", live_ma_wav_stream)
     app.router.add_get("/live.ma.mp3", live_ma_mp3_stream)

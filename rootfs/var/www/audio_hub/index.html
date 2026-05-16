@@ -478,7 +478,7 @@
           <code id="liveUrl">Loading live URL...</code>
           <button id="copyLiveUrl" class="secondary">Copy</button>
         </div>
-        <p>Lowest-delay Music Assistant URL. Fallbacks: /live.ma.aac, /live.ma.flac, /live.ma.wav.</p>
+        <p>Music Assistant URL. Fallbacks: /live.ma.ts, /live.ma.flac, /live.ma.wav. Raw PCM is diagnostics only.</p>
       </article>
 
       <article class="panel">
@@ -701,7 +701,7 @@
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
-      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.raw`;
+      const permanentLiveUrl = `http://${window.location.hostname}:41888/live.ma.aac`;
       $("liveUrl").textContent = permanentLiveUrl;
       const groups = bridge.groups || [];
       const clients = bridge.clients || [];
@@ -709,7 +709,7 @@
       const userGroups = groups.filter((group) => !group.internal_tap);
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
-      const bufferedWarning = `<div class="player-item warning"><strong>MA stream URL is now raw low-latency PCM</strong><span>The copied /live.ma.raw URL avoids encoder delay. If Music Assistant rejects raw PCM, use /live.ma.aac first, then /live.ma.flac or /live.ma.wav as fallbacks.</span></div>`;
+      const bufferedWarning = `<div class="player-item warning"><strong>Use AAC for Music Assistant</strong><span>Raw PCM is valid for diagnostics but Music Assistant cannot probe it from Add item from URL. Use /live.ma.aac first; if your MA build prefers transport streams, try /live.ma.ts.</span></div>`;
       $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
