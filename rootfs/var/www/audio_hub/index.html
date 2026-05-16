@@ -466,6 +466,7 @@
       <article class="panel">
         <h2>Players / Groups</h2>
         <div id="playerList" class="player-list"></div>
+        <div id="haPlayerList" class="player-list"></div>
         <div class="meter">
           <div class="meter-head"><span>Low-latency add-on monitor</span><b id="addonMonitorStatus">stopped</b></div>
           <div class="meter-track"><div id="addonMonitorFill" class="meter-fill"></div></div>
@@ -478,7 +479,7 @@
           <code id="liveUrl">Loading live URL...</code>
           <button id="copyLiveUrl" class="secondary">Copy</button>
         </div>
-        <p>Music Assistant URL. Fallbacks: /live.ma.ts, /live.ma.flac, /live.ma.wav. Raw PCM is diagnostics only.</p>
+        <p>Buffered Music Assistant fallback URL. For low-delay speakers, use real Snapcast clients on the AudioHub stream.</p>
       </article>
 
       <article class="panel">
@@ -697,7 +698,7 @@
       const health = data.health || {};
       const stateLabel = (bridge.state || health.music_assistant || "unknown").replaceAll("_", " ");
       $("mixTitle").textContent = stateLabel === "mixing music" ? "Music + Mic Mix Active" : stateLabel;
-      $("mixSubtitle").textContent = bridge.error || "Music Assistant controls playback and groups; Audio Hub performs the final mix before Snapcast playback.";
+      $("mixSubtitle").textContent = bridge.error || "Audio Hub performs the final mix. Native Snapcast clients are the low-delay output; Music Assistant live-radio URLs are buffered fallbacks.";
       $("musicPath").textContent = bridge.ma_stream ? `MA stream ${bridge.ma_stream} / ${bridge.ma_stream_state || "unknown"}` : "waiting for Music Assistant playback";
       $("micPath").textContent = `${health.wired_input || "unknown"} / ${health.capture_mode || "none"}`;
       $("outputPath").textContent = bridge.final_stream ? `final stream ${bridge.final_stream}` : "AudioHub final stream";
@@ -707,14 +708,19 @@
       const clients = bridge.clients || [];
       const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
       const userGroups = groups.filter((group) => !group.internal_tap);
+      const haPlayers = data.ha_media_players || [];
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
-      const bufferedWarning = `<div class="player-item warning"><strong>Use AAC for Music Assistant</strong><span>Raw PCM is valid for diagnostics but Music Assistant cannot probe it from Add item from URL. Use /live.ma.aac first; if your MA build prefers transport streams, try /live.ma.ts.</span></div>`;
+      const bufferedWarning = `<div class="player-item warning"><strong>Music Assistant radio is buffered</strong><span>The copied URL is only a compatibility fallback and will lag. For near-live mic playback, run a Snapcast client on the speaker/device and route that group to the AudioHub stream.</span></div>`;
       $("playerList").innerHTML = userGroups.length ? `${tapInfo}${userGroups.map((group) => {
         const names = (group.clients || []).map((id) => byId[id]?.name || id).join(", ") || "no clients";
         const safeId = String(group.id || "").replaceAll('"', "&quot;");
-        return `<div class="player-item"><strong>${group.name || group.id}</strong><span>Stream: ${group.stream || "none"}</span><span>${names}</span><div class="actions"><button class="secondary" data-action="use_final_stream" data-group="${safeId}">Use Mix</button><button class="secondary" data-action="use_ma_stream" data-group="${safeId}">Use MA Raw</button></div></div>`;
+        return `<div class="player-item"><strong>${group.name || group.id}</strong><span>Stream: ${group.stream || "none"}</span><span>${names}</span><div class="actions"><button class="secondary" data-action="use_final_stream" data-group="${safeId}">Use AudioHub Mix</button><button class="secondary" data-action="use_ma_stream" data-group="${safeId}">Use MA Music</button></div></div>`;
       }).join("")}` : `${tapInfo}${bufferedWarning}<div class="player-item"><strong>No speaker Snapcast clients connected</strong><span>Music Assistant will only show the virtual Audio Hub Mix Input until you start a Snapcast client on a phone, browser, another add-on, or speaker endpoint.</span></div>`;
+      $("haPlayerList").innerHTML = haPlayers.length ? `<div class="player-item warning"><strong>Home Assistant media players</strong><span>This commands Sonos/Chromecast/other HA players to play the mixed stream directly. It is convenient, but these players still buffer URL streams.</span></div>${haPlayers.map((player) => {
+        const entity = String(player.entity_id || "").replaceAll('"', "&quot;");
+        return `<div class="player-item"><strong>${player.name || player.entity_id}</strong><span>${player.entity_id} / ${player.state || "unknown"}</span><div class="actions"><button class="secondary" data-action="play_ha_media_player" data-entity="${entity}">Play Mix</button><button class="secondary" data-action="stop_ha_media_player" data-entity="${entity}">Stop</button></div></div>`;
+      }).join("")}` : `<div class="player-item"><strong>No Home Assistant media players found</strong><span>The add-on can show Sonos, Chromecast, and other HA media_player entities here when the Home Assistant API is available.</span></div>`;
     }
 
     function renderCaptureDevices(devices, selected) {
@@ -1063,6 +1069,19 @@
       const button = event.target.closest("button[data-action]");
       if (!button) return;
       await api("/api/snapcast/action", { method: "POST", body: JSON.stringify({ action: button.dataset.action, group_id: button.dataset.group }) });
+      await refresh();
+    });
+    $("haPlayerList").addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const payload = {
+        action: button.dataset.action,
+        entity_id: button.dataset.entity,
+        media_url: $("liveUrl").textContent,
+        content_type: "music",
+      };
+      const result = await api("/api/snapcast/action", { method: "POST", body: JSON.stringify(payload) });
+      $("subtitle").textContent = result.ok ? `Sent mix to ${button.dataset.entity}` : `Player action failed: ${result.error || "unknown error"}`;
       await refresh();
     });
     $("copyLiveUrl").addEventListener("click", async () => {

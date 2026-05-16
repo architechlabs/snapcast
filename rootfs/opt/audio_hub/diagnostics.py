@@ -12,10 +12,12 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
     devices_task = asyncio.create_task(list_audio_devices())
     bt_task = asyncio.create_task(bluetooth_status())
     pulse_info_task = asyncio.create_task(run_checked(["pactl", "info"], timeout=5, env=PULSE_ENV))
+    media_players_task = asyncio.create_task(entities.list_media_players()) if entities else None
 
     devices = await devices_task
     bt = await bt_task
     pulse_rc, pulse_out = await pulse_info_task
+    media_players = await media_players_task if media_players_task else []
 
     snap_status = "running" if snapcast.running() else "stopped"
     pulse_status = pulse.health() if pulse else "stopped"
@@ -41,11 +43,11 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
     }
     bridge_status = getattr(snapcast, "bridge_status", {}) if snapcast else {}
     user_client_count = int(bridge_status.get("user_client_count") or 0)
-    health["low_latency_output"] = "snapcast_output" if user_client_count > 0 else "ma_http_stream"
+    health["low_latency_output"] = "snapcast_native" if user_client_count > 0 else "waiting_for_snapcast_speakers"
     if user_client_count == 0:
-        health["output_message"] = "Mic capture is live. Use /live.ma.aac for Music Assistant. If your MA build prefers transport streams, try /live.ma.ts. Raw PCM is diagnostics-only and may not be accepted by MA."
+        health["output_message"] = "Mic capture is live, but Music Assistant live-radio URLs are buffered. For low-delay speaker playback, start a real Snapcast client and route its group to the AudioHub stream."
     else:
-        health["output_message"] = "Route the speaker group to the AudioHub stream for the mixed low-latency Snapcast output."
+        health["output_message"] = "Low-delay path is active: route speaker groups to the AudioHub Snapcast stream. Music Assistant live-radio URLs remain buffered fallbacks."
     return {
         "summary": f"{health['pipeline']} / {active_source}",
         "config": config,
@@ -53,6 +55,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "devices": devices,
         "bluetooth": bt,
         "snapcast_bridge": bridge_status,
+        "ha_media_players": media_players,
         "pulse_info": pulse_out if pulse_rc == 0 else "",
         "fifo_exists": Path("/tmp/audio-hub/snapcast.pcm").exists(),
     }

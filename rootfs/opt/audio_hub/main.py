@@ -216,6 +216,10 @@ class AudioHub:
             result = await self.snapcast.set_group_mute(payload.get("group_id"), bool(payload.get("muted", True)))
         elif action == "client_volume":
             result = await self.snapcast.set_client_volume(payload.get("client_id"), int(payload.get("volume", 50)), payload.get("muted"))
+        elif action == "play_ha_media_player":
+            result = await self.entities.play_media_player(payload.get("entity_id"), payload.get("media_url"), payload.get("content_type", "music"))
+        elif action == "stop_ha_media_player":
+            result = await self.entities.stop_media_player(payload.get("entity_id"))
         else:
             result = {"ok": False, "error": f"unknown action {action}"}
         self.status_cache = await collect(self.config, self.pulse, self.snapcast, self.entities)

@@ -145,6 +145,65 @@ class EntityManager:
         self.client.publish(f"{base}/availability", "offline", retain=True)
         return {"ok": True}
 
+    async def list_media_players(self) -> list[dict[str, Any]]:
+        token = os.environ.get("SUPERVISOR_TOKEN")
+        if not token:
+            return []
+        headers = ["-H", f"Authorization: Bearer {token}", "-H", "Content-Type: application/json"]
+        rc, out = await run_checked(["curl", "-fsS", *headers, "http://supervisor/core/api/states"], timeout=8)
+        if rc != 0:
+            return []
+        try:
+            states = json.loads(out)
+        except json.JSONDecodeError:
+            return []
+        players = []
+        for item in states if isinstance(states, list) else []:
+            entity_id = str(item.get("entity_id") or "")
+            if not entity_id.startswith("media_player."):
+                continue
+            attributes = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+            players.append({
+                "entity_id": entity_id,
+                "name": attributes.get("friendly_name") or entity_id,
+                "state": item.get("state") or "unknown",
+                "integration": attributes.get("device_class") or attributes.get("source") or "",
+                "supported_features": attributes.get("supported_features", 0),
+            })
+        return players
+
+    async def play_media_player(self, entity_id: str | None, media_url: str | None, content_type: str = "music") -> dict[str, Any]:
+        if not entity_id:
+            return {"ok": False, "error": "missing media_player entity_id"}
+        if not media_url:
+            return {"ok": False, "error": "missing media URL"}
+        token = os.environ.get("SUPERVISOR_TOKEN")
+        if not token:
+            return {"ok": False, "error": "Home Assistant API token is unavailable"}
+        body = json.dumps({
+            "entity_id": entity_id,
+            "media_content_id": media_url,
+            "media_content_type": content_type,
+        })
+        headers = ["-H", f"Authorization: Bearer {token}", "-H", "Content-Type: application/json"]
+        rc, out = await run_checked(["curl", "-fsS", "-X", "POST", *headers, "-d", body, "http://supervisor/core/api/services/media_player/play_media"], timeout=10)
+        if rc != 0:
+            return {"ok": False, "error": out.strip() or "media_player.play_media failed"}
+        return {"ok": True, "entity_id": entity_id, "media_url": media_url}
+
+    async def stop_media_player(self, entity_id: str | None) -> dict[str, Any]:
+        if not entity_id:
+            return {"ok": False, "error": "missing media_player entity_id"}
+        token = os.environ.get("SUPERVISOR_TOKEN")
+        if not token:
+            return {"ok": False, "error": "Home Assistant API token is unavailable"}
+        body = json.dumps({"entity_id": entity_id})
+        headers = ["-H", f"Authorization: Bearer {token}", "-H", "Content-Type: application/json"]
+        rc, out = await run_checked(["curl", "-fsS", "-X", "POST", *headers, "-d", body, "http://supervisor/core/api/services/media_player/media_stop"], timeout=10)
+        if rc != 0:
+            return {"ok": False, "error": out.strip() or "media_player.media_stop failed"}
+        return {"ok": True, "entity_id": entity_id}
+
     async def publish_status(self, status: dict[str, Any]) -> None:
         self.last_status = status
         base = self.config["entities"]["mqtt_base_topic"]
