@@ -22,6 +22,7 @@ class EntityManager:
         self.client: mqtt.Client | None = None
         self.loop: asyncio.AbstractEventLoop | None = None
         self.last_status: dict[str, Any] = {}
+        self.last_ha_error = ""
 
     async def start(self) -> None:
         self.loop = asyncio.get_running_loop()
@@ -146,16 +147,20 @@ class EntityManager:
         return {"ok": True}
 
     async def list_media_players(self) -> list[dict[str, Any]]:
+        self.last_ha_error = ""
         token = os.environ.get("SUPERVISOR_TOKEN")
         if not token:
+            self.last_ha_error = "Home Assistant API token is unavailable"
             return []
         headers = ["-H", f"Authorization: Bearer {token}", "-H", "Content-Type: application/json"]
         rc, out = await run_checked(["curl", "-fsS", *headers, "http://supervisor/core/api/states"], timeout=8)
         if rc != 0:
+            self.last_ha_error = out.strip() or "Home Assistant states API request failed"
             return []
         try:
             states = json.loads(out)
         except json.JSONDecodeError:
+            self.last_ha_error = "Home Assistant states API returned invalid JSON"
             return []
         players = []
         for item in states if isinstance(states, list) else []:

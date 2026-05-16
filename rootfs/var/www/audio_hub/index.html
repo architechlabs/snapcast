@@ -48,6 +48,7 @@
     h1, h2, h3, p { margin: 0; }
     h1 { font-size: 24px; line-height: 1.2; letter-spacing: 0; }
     h2 { font-size: 15px; margin-bottom: 12px; }
+    h3 { font-size: 13px; margin: 12px 0 8px; color: var(--muted); }
     p { color: var(--muted); }
 
     .summary {
@@ -465,7 +466,16 @@
 
       <article class="panel">
         <h2>Players / Groups</h2>
+        <h3>Low-delay Snapcast output</h3>
         <div id="playerList" class="player-list"></div>
+        <h3>Play mixed stream on Home Assistant media players</h3>
+        <div class="copyline">
+          <input id="manualHaEntity" placeholder="media_player.living_room_sonos">
+          <button id="playManualHaPlayer" class="secondary">Play Mix</button>
+        </div>
+        <div class="actions">
+          <button id="stopManualHaPlayer" class="secondary">Stop Typed Player</button>
+        </div>
         <div id="haPlayerList" class="player-list"></div>
         <div class="meter">
           <div class="meter-head"><span>Low-latency add-on monitor</span><b id="addonMonitorStatus">stopped</b></div>
@@ -709,6 +719,7 @@
       const byId = Object.fromEntries(clients.map((client) => [client.id, client]));
       const userGroups = groups.filter((group) => !group.internal_tap);
       const haPlayers = data.ha_media_players || [];
+      const haPlayerError = data.ha_media_player_error || "";
       const tapClient = clients.find((client) => client.internal_tap);
       const tapInfo = tapClient ? `<div class="player-item"><strong>${tapClient.name || "Audio Hub Mix Input"}</strong><span>Virtual Snapcast input used by Music Assistant. It is not a speaker.</span></div>` : "";
       const bufferedWarning = `<div class="player-item warning"><strong>Music Assistant radio is buffered</strong><span>The copied URL is only a compatibility fallback and will lag. For near-live mic playback, run a Snapcast client on the speaker/device and route that group to the AudioHub stream.</span></div>`;
@@ -720,7 +731,7 @@
       $("haPlayerList").innerHTML = haPlayers.length ? `<div class="player-item warning"><strong>Home Assistant media players</strong><span>This commands Sonos/Chromecast/other HA players to play the mixed stream directly. It is convenient, but these players still buffer URL streams.</span></div>${haPlayers.map((player) => {
         const entity = String(player.entity_id || "").replaceAll('"', "&quot;");
         return `<div class="player-item"><strong>${player.name || player.entity_id}</strong><span>${player.entity_id} / ${player.state || "unknown"}</span><div class="actions"><button class="secondary" data-action="play_ha_media_player" data-entity="${entity}">Play Mix</button><button class="secondary" data-action="stop_ha_media_player" data-entity="${entity}">Stop</button></div></div>`;
-      }).join("")}` : `<div class="player-item"><strong>No Home Assistant media players found</strong><span>The add-on can show Sonos, Chromecast, and other HA media_player entities here when the Home Assistant API is available.</span></div>`;
+      }).join("")}` : `<div class="player-item"><strong>No Home Assistant media players found</strong><span>${haPlayerError || "Type a media_player entity above, or wait for the Home Assistant API list to refresh."}</span></div>`;
     }
 
     function renderCaptureDevices(devices, selected) {
@@ -1082,6 +1093,37 @@
       };
       const result = await api("/api/snapcast/action", { method: "POST", body: JSON.stringify(payload) });
       $("subtitle").textContent = result.ok ? `Sent mix to ${button.dataset.entity}` : `Player action failed: ${result.error || "unknown error"}`;
+      await refresh();
+    });
+    $("playManualHaPlayer").addEventListener("click", async () => {
+      const entity = $("manualHaEntity").value.trim();
+      if (!entity) {
+        $("subtitle").textContent = "Type a media_player entity first";
+        return;
+      }
+      const result = await api("/api/snapcast/action", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "play_ha_media_player",
+          entity_id: entity,
+          media_url: $("liveUrl").textContent,
+          content_type: "music",
+        }),
+      });
+      $("subtitle").textContent = result.ok ? `Sent mix to ${entity}` : `Player action failed: ${result.error || "unknown error"}`;
+      await refresh();
+    });
+    $("stopManualHaPlayer").addEventListener("click", async () => {
+      const entity = $("manualHaEntity").value.trim();
+      if (!entity) {
+        $("subtitle").textContent = "Type a media_player entity first";
+        return;
+      }
+      const result = await api("/api/snapcast/action", {
+        method: "POST",
+        body: JSON.stringify({ action: "stop_ha_media_player", entity_id: entity }),
+      });
+      $("subtitle").textContent = result.ok ? `Stopped ${entity}` : `Stop failed: ${result.error || "unknown error"}`;
       await refresh();
     });
     $("copyLiveUrl").addEventListener("click", async () => {

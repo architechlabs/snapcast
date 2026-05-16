@@ -56,6 +56,7 @@ async def collect(config: dict, pulse, snapcast, entities) -> dict:
         "bluetooth": bt,
         "snapcast_bridge": bridge_status,
         "ha_media_players": media_players,
+        "ha_media_player_error": getattr(entities, "last_ha_error", "") if entities else "",
         "pulse_info": pulse_out if pulse_rc == 0 else "",
         "fifo_exists": Path("/tmp/audio-hub/snapcast.pcm").exists(),
     }
